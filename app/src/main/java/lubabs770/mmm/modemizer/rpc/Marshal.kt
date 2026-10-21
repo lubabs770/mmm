@@ -78,7 +78,8 @@ object Marshal {
         is JSONObject -> when {
             json.has(KEY_HANDLE) -> resolve(json.getLong(KEY_HANDLE))
             json.has(KEY_B64) -> B64.decode(json.getString(KEY_B64))
-            json.has(KEY_CLASS) -> Class.forName(json.getString(KEY_CLASS))
+            // resolveClass loads without running static initialisers.
+            json.has(KEY_CLASS) -> RpcEngine.resolveClass(json.getString(KEY_CLASS))
             else -> LinkedHashMap<String, Any?>().also { map ->
                 json.keys().forEach { key -> map[key] = fromJson(json.get(key), resolve) }
             }

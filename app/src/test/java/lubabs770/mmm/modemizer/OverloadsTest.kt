@@ -22,6 +22,9 @@ class Fixture {
     fun bytes(data: ByteArray) = data.size
     fun ints(values: IntArray) = values.sum()
 
+    private fun hidden() = "private"
+    fun shown() = "public"
+
     fun ambiguous(value: Left) = "Left"
     fun ambiguous(value: Right) = "Right"
 
@@ -128,5 +131,15 @@ class OverloadsTest {
     fun `fits rejects null for a primitive`() {
         assertTrue(Overloads.fits(String::class.java, null))
         assertTrue(!Overloads.fits(java.lang.Integer.TYPE, null))
+    }
+
+    @Test
+    fun `public only hides private methods from scoped tokens`() {
+        assertEquals("hidden", Overloads.findMethod(cls, "hidden", emptyList()).name)
+        val error = runCatching {
+            Overloads.findMethod(cls, "hidden", emptyList(), publicOnly = true)
+        }.exceptionOrNull()
+        assertTrue(error is Overloads.NoMatch)
+        assertEquals("shown", Overloads.findMethod(cls, "shown", emptyList(), publicOnly = true).name)
     }
 }

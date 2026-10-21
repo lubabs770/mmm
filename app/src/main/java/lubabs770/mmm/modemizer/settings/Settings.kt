@@ -62,7 +62,7 @@ class SettingsStore private constructor(private val file: File) {
 
     val current: MmmSettings get() = _state.value
 
-    fun update(block: (MmmSettings) -> MmmSettings) {
+    fun update(block: (MmmSettings) -> MmmSettings) = synchronized(this) {
         _state.value = block(_state.value)
         JsonFile.write(file, _state.value.toJson())
     }

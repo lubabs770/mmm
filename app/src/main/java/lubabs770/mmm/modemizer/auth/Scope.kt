@@ -70,8 +70,13 @@ data class Scope(
             return (0 until length()).map { optString(it) }.filter { it.isNotEmpty() }
         }
 
+        private val compiled = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+
         /** Glob match where `*` stands for any run of characters. */
-        fun matches(pattern: String, value: String): Boolean {
+        fun matches(pattern: String, value: String): Boolean =
+            compiled.getOrPut(pattern) { globToRegex(pattern) }.matches(value)
+
+        private fun globToRegex(pattern: String): Regex {
             val regex = buildString {
                 append('^')
                 pattern.forEach { c ->
@@ -82,7 +87,7 @@ data class Scope(
                 }
                 append('$')
             }
-            return Regex(regex).matches(value)
+            return Regex(regex)
         }
     }
 }

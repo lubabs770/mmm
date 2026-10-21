@@ -7,12 +7,15 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Handles are opaque longs. The client's garbage collector sends `release` in batches;
  * everything left is dropped when the session ends.
+ *
+ * Numbers come from one process-wide counter, never per table: a client that
+ * reconnects may still hold (or garbage-collect) handles from its old session, and
+ * those must fail as unknown rather than silently name a different object.
  */
 class HandleTable(private val cap: Int = DEFAULT_CAP) {
 
     class CapExceeded(cap: Int) : RuntimeException("handle table full ($cap handles)")
 
-    private val next = AtomicLong(1)
     private val objects = HashMap<Long, Any>()
 
     val size: Int get() = synchronized(objects) { objects.size }
@@ -20,7 +23,7 @@ class HandleTable(private val cap: Int = DEFAULT_CAP) {
     /** Stores [value] and returns its handle. */
     fun put(value: Any): Long = synchronized(objects) {
         if (objects.size >= cap) throw CapExceeded(cap)
-        val id = next.getAndIncrement()
+        val id = NEXT.getAndIncrement()
         objects[id] = value
         id
     }
@@ -41,5 +44,7 @@ class HandleTable(private val cap: Int = DEFAULT_CAP) {
 
     companion object {
         const val DEFAULT_CAP = 50_000
+
+        private val NEXT = AtomicLong(1)
     }
 }

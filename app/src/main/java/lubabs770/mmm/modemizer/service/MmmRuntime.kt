@@ -62,7 +62,21 @@ object MmmRuntime {
         val p = parts(context)
         p.server.stop()
         p.events.shutdown()
+        p.audit.flush()
         _running.value = false
+    }
+
+    /**
+     * Revokes a client everywhere at once: the token, its durable subscriptions, and
+     * any connection it has open right now.
+     */
+    fun revokeClient(context: Context, tokenId: String) {
+        val p = parts(context)
+        val label = p.tokens.byId(tokenId)?.label ?: tokenId
+        p.tokens.revoke(tokenId)
+        p.server.disconnectToken(tokenId)
+        p.events.dropForToken(tokenId)
+        p.audit.log(AuditLog.Kind.REVOKE, "revoked $label", tokenId)
     }
 
     /** Re-binds the listener, for when the port setting changes. */

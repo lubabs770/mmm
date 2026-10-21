@@ -70,8 +70,7 @@ class TokenStore private constructor(private val file: File) {
             createdAt = now,
             lastSeen = 0L,
         )
-        _clients.value = _clients.value + client
-        save()
+        mutate { it + client }
         return client to token
     }
 
@@ -83,12 +82,20 @@ class TokenStore private constructor(private val file: File) {
 
     fun touch(id: String) {
         val now = System.currentTimeMillis()
-        _clients.value = _clients.value.map { if (it.id == id) it.copy(lastSeen = now) else it }
-        save()
+        mutate { list -> list.map { if (it.id == id) it.copy(lastSeen = now) else it } }
     }
 
     fun revoke(id: String) {
-        _clients.value = _clients.value.filterNot { it.id == id }
+        mutate { list -> list.filterNot { it.id == id } }
+    }
+
+    /**
+     * Every change is read-modify-write under one lock: without it, a `touch` racing
+     * a `revoke` could write back the list it read before the revoke and bring the
+     * revoked token back to life.
+     */
+    private fun mutate(change: (List<ClientToken>) -> List<ClientToken>) = synchronized(this) {
+        _clients.value = change(_clients.value)
         save()
     }
 

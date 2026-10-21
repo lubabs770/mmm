@@ -292,3 +292,67 @@ def test_concurrent_calls_get_their_own_replies():
         for thread in threads:
             thread.join(timeout=5)
         assert answers == {"slow": "slow", "fast": "fast"}
+
+
+def wait_until(condition, seconds: float = 3.0) -> bool:
+    deadline = time.time() + seconds
+    while not condition() and time.time() < deadline:
+        time.sleep(0.01)
+    return condition()
+
+
+def test_a_handler_can_call_the_phone_without_deadlocking():
+    answers: list = []
+    with FakeServer() as server, connect(server) as android:
+        facade = android.cls("lubabs770.mmm.modemizer.rpc.Facade")
+
+        def on_sms(payload):
+            # Before handlers moved off the reader thread this waited for the full
+            # timeout: the reply could only be read by the thread running this.
+            answers.append(android.call(facade, "smsList", android.context, 1))
+
+        android.subscribe("android.provider.Telephony.SMS_RECEIVED", name="sms", handler=on_sms)
+        started = time.time()
+        server.event("sms", {"action": "SMS_RECEIVED"})
+        assert wait_until(lambda: answers)
+        assert answers == ["called"]
+        assert time.time() - started < 2
+
+
+def test_a_proxy_handler_can_call_the_phone_and_still_reply():
+    with FakeServer() as server, connect(server) as android:
+
+        def handler(method, args):
+            return android.call(android.cls("x"), "y")
+
+        android.proxy("java.lang.Runnable", handler)
+        server.event("proxy#1", {"method": "call", "args": []}, event_id=9, needs_reply=True)
+        assert wait_until(lambda: server.sent("reply"))
+        assert server.sent("reply")[-1] == {"op": "reply", "event_id": 9, "value": "called"}
+
+
+def test_objects_from_an_old_connection_are_refused_and_never_released():
+    with FakeServer() as server:
+        android = Android(profile_for(server), reconnect=True, timeout=5)
+        try:
+            old = android.new("java.lang.Object")
+            server.drop_connection()
+            assert wait_until(lambda: len(server.sent("auth")) == 2 and android.connected, 10)
+            with pytest.raises(MmmError):
+                android.call(old, "toString")
+            # Collecting the old object must not free whatever the new session
+            # happens to keep under the same number.
+            for _ in range(40):
+                old.release()
+            android.ping()
+            assert all(old.handle not in r["handles"] for r in server.sent("release"))
+        finally:
+            android.close()
+
+
+def test_a_rejected_token_does_not_keep_retrying():
+    with FakeServer() as server:
+        with pytest.raises(AndroidError):
+            Android(profile_for(server, token="revoked"), reconnect=True, timeout=5)
+        time.sleep(1.5)
+        assert server.connections == 1

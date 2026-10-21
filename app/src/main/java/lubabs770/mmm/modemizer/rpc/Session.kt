@@ -2,10 +2,10 @@ package lubabs770.mmm.modemizer.rpc
 
 import android.content.Context
 import android.util.Log
-import java.io.BufferedReader
 import java.io.BufferedWriter
+import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.io.InputStreamReader
+import java.io.InputStream
 import java.io.OutputStreamWriter
 import java.net.Socket
 import java.util.concurrent.ArrayBlockingQueue
@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import lubabs770.mmm.modemizer.auth.AuditLog
 import lubabs770.mmm.modemizer.auth.ClientToken
@@ -52,6 +53,8 @@ class Session(
     override val sessionId: Long = Ids.nextSession()
 
     private val handles = HandleTable(settings.current.handleCap)
+    // Calls block (content providers, binder, proxies awaiting replies), so they run on
+    // the IO pool rather than the few CPU threads of Dispatchers.Default.
     private val workers = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pendingReplies = ConcurrentHashMap<Long, ArrayBlockingQueue<Array<Any?>>>()
     private val writeLock = Any()
@@ -74,15 +77,31 @@ class Session(
 
     // ------------------------------------------------------------------ loop
 
-    /** Blocks until the connection ends; the server runs this on its own coroutine. */
+    /** True once `auth` has succeeded on this connection. */
+    val authenticated: Boolean get() = client != null
+
+    /** Blocks until the connection ends; the server runs this on its own thread. */
     fun run() {
         try {
-            val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.UTF_8))
+            // Until auth arrives, anyone on the phone can be on the other end: give
+            // them a hard deadline and a small line, so idle, trickling or endless
+            // connections cannot pin threads or memory.
+            workers.launch {
+                delay(AUTH_TIMEOUT_MS)
+                if (client == null) {
+                    audit.log(AuditLog.Kind.AUTH_FAIL, "no auth within ${AUTH_TIMEOUT_MS / 1000}s; connection closed")
+                    close()
+                }
+            }
+            val reader = LineReader(socket.getInputStream())
             while (!closed) {
+                val limit = if (client == null) MAX_LINE_BEFORE_AUTH else MAX_LINE
                 val line = try {
-                    reader.readLine()
+                    reader.readLine(limit)
+                } catch (e: LineTooLong) {
+                    throw e
                 } catch (e: IOException) {
-                    null
+                    null // closed or reset
                 } ?: break
                 if (line.isBlank()) continue
                 val request = try {
@@ -93,6 +112,8 @@ class Session(
                 }
                 onRequest(request)
             }
+        } catch (e: LineTooLong) {
+            sendError(null, "protocol", e.message ?: "line too long", null)
         } catch (e: Exception) {
             Log.w(TAG, "session $sessionId ended", e)
         } finally {
@@ -100,10 +121,54 @@ class Session(
         }
     }
 
+    private class LineTooLong(limit: Int) : IOException("request line longer than $limit bytes")
+
+    /** Reads `\n`-terminated UTF-8 lines, refusing any longer than the limit given. */
+    private class LineReader(private val input: InputStream) {
+        private val chunk = ByteArray(64 * 1024)
+        private var start = 0
+        private var end = 0
+
+        /** The next line, or null at end of stream. */
+        fun readLine(limit: Int): String? {
+            val line = ByteArrayOutputStream()
+            while (true) {
+                if (start == end) {
+                    val n = input.read(chunk)
+                    if (n < 0) return if (line.size() == 0) null else line.toString("UTF-8")
+                    start = 0
+                    end = n
+                }
+                var newline = -1
+                for (i in start until end) {
+                    if (chunk[i] == '\n'.code.toByte()) {
+                        newline = i
+                        break
+                    }
+                }
+                val stop = if (newline >= 0) newline else end
+                if (line.size() + (stop - start) > limit) throw LineTooLong(limit)
+                line.write(chunk, start, stop - start)
+                if (newline >= 0) {
+                    start = newline + 1
+                    return line.toString("UTF-8")
+                }
+                start = end
+            }
+        }
+    }
+
     private fun onRequest(request: JSONObject) {
         val id = request.opt("id")
         val op = request.optString("op")
         val current = client
+        if (current != null && tokens.byId(current.id) == null) {
+            // Revoked while connected. RpcServer also drops these sessions, this is
+            // the backstop for a request already on its way.
+            sendError(id, "unauthorized", "token revoked", null)
+            close()
+            return
+        }
         if (current == null) {
             if (op != "auth") {
                 audit.log(AuditLog.Kind.AUTH_FAIL, "'$op' before auth; connection closed")
@@ -128,6 +193,11 @@ class Session(
 
     private fun complete(id: Any?, request: JSONObject, op: String, caller: ClientToken) {
         try {
+            if (wantsExpand(request) && !caller.scope.full) {
+                // Expanding calls every getter on an object, none of them scope-checked.
+                audit.log(AuditLog.Kind.REJECT, "$op with expand outside scope", caller.id)
+                throw SecurityException("expand requires a full-scope token")
+            }
             sendResult(id, execute(op, request, caller), request)
         } catch (t: Throwable) {
             sendError(id, t)
@@ -158,7 +228,7 @@ class Session(
             val className = request.getString("cls")
             requireScope(caller, className, "<init>")
             audit.countCall(caller.id)
-            RpcEngine.construct(className, args(request), sig(request))
+            RpcEngine.construct(className, args(request), sig(request), publicOnly = !caller.scope.full)
         }
 
         "call" -> {
@@ -166,21 +236,26 @@ class Session(
             val method = request.getString("method")
             requireScope(caller, RpcEngine.targetClassName(receiver), method)
             audit.countCall(caller.id)
-            RpcEngine.call(receiver, method, args(request), sig(request))
+            RpcEngine.call(receiver, method, args(request), sig(request), publicOnly = !caller.scope.full)
         }
 
         "get" -> {
             val receiver = target(request)
             val field = request.getString("field")
             requireScope(caller, RpcEngine.targetClassName(receiver), field)
-            RpcEngine.getField(receiver, field)
+            RpcEngine.getField(receiver, field, publicOnly = !caller.scope.full)
         }
 
         "set" -> {
             val receiver = target(request)
             val field = request.getString("field")
             requireScope(caller, RpcEngine.targetClassName(receiver), field)
-            RpcEngine.setField(receiver, field, Marshal.fromJson(request.opt("value"), ::resolve))
+            RpcEngine.setField(
+                receiver,
+                field,
+                Marshal.fromJson(request.opt("value"), ::resolve),
+                publicOnly = !caller.scope.full,
+            )
             true
         }
 
@@ -224,9 +299,15 @@ class Session(
             }
             val durable = request.optBoolean("durable", false)
             val replay = events.subscribe(this, caller.id, name, actions, durable)
-            replay.forEach { entry ->
+            replay.forEachIndexed { index, entry ->
                 val payload = runCatching { JSONObject(entry.json) }.getOrNull() ?: JSONObject()
-                emit(name, entry.eventId, entry.ts, payload)
+                try {
+                    emit(name, entry.eventId, entry.ts, payload)
+                } catch (e: IOException) {
+                    // The client went away mid-replay: keep what it did not get.
+                    events.requeue(caller.id, name, replay.drop(index))
+                    throw e
+                }
             }
             Prepared(
                 JSONObject()
@@ -304,7 +385,7 @@ class Session(
     override fun handle(value: Any): Long = handles.put(value)
 
     override fun emit(sub: String, eventId: Long, ts: Long, payload: Any) {
-        send(
+        val sent = send(
             JSONObject()
                 .put("op", "event")
                 .put("sub", sub)
@@ -312,6 +393,8 @@ class Session(
                 .put("ts", ts)
                 .put("payload", payload)
         )
+        // EventHub buffers durable events on failure, so it has to hear about it.
+        if (!sent) throw IOException("session $sessionId is closed")
     }
 
     override fun emitAwaitingReply(sub: String, payload: Any, timeoutMs: Long): Any? {
@@ -319,7 +402,7 @@ class Session(
         val mailbox = ArrayBlockingQueue<Array<Any?>>(1)
         pendingReplies[eventId] = mailbox
         return try {
-            send(
+            val sent = send(
                 JSONObject()
                     .put("op", "event")
                     .put("sub", sub)
@@ -328,6 +411,7 @@ class Session(
                     .put("needs_reply", true)
                     .put("payload", payload)
             )
+            if (!sent) return null
             mailbox.poll(timeoutMs, TimeUnit.MILLISECONDS)?.get(0)
         } finally {
             pendingReplies.remove(eventId)
@@ -336,10 +420,13 @@ class Session(
 
     // ------------------------------------------------------------------ wire
 
+    private fun wantsExpand(request: JSONObject): Boolean =
+        request.optBoolean(EXPAND, false) ||
+            request.optBoolean("expand", false) ||
+            request.optString("op") == "expand"
+
     private fun sendResult(id: Any?, value: Any?, request: JSONObject?) {
-        val expand = request?.optBoolean(EXPAND, false) == true ||
-            request?.optBoolean("expand", false) == true ||
-            request?.optString("op") == "expand"
+        val expand = request != null && wantsExpand(request)
         val json = when {
             value is Prepared -> value.json
             expand -> Marshal.expand(value, this)
@@ -370,17 +457,20 @@ class Session(
         )
     }
 
-    private fun send(obj: JSONObject) {
-        if (closed) return
-        try {
+    /** False when the message did not go out, because the session is closed or just died. */
+    private fun send(obj: JSONObject): Boolean {
+        if (closed) return false
+        return try {
             synchronized(writeLock) {
                 writer.write(obj.toString())
                 writer.write("\n")
                 writer.flush()
             }
+            true
         } catch (e: IOException) {
             // The client vanished mid-write; the reader loop will notice too.
             close()
+            false
         }
     }
 
@@ -403,5 +493,8 @@ class Session(
         private const val TAG = "MmmSession"
         private const val MAX_STACK = 4000
         private const val EXPAND = "\$expand"
+        private const val AUTH_TIMEOUT_MS = 10_000L
+        private const val MAX_LINE_BEFORE_AUTH = 64 * 1024
+        private const val MAX_LINE = 32 * 1024 * 1024
     }
 }

@@ -81,4 +81,23 @@ class BacklogTest {
         assertEquals(0, log.size)
         assertEquals(0, log.dropped)
     }
+
+    @Test
+    fun `requeued events go back ahead of newer ones`() {
+        val log = backlog(maxEvents = 5)
+        (1L..3L).forEach { log.add(entry(it)) }
+        val drained = log.drain()
+        log.add(entry(4))
+        log.requeue(drained.drop(1))
+        assertEquals(listOf(2L, 3L, 4L), log.snapshot().map { it.eventId })
+    }
+
+    @Test
+    fun `requeue still respects the cap`() {
+        val log = backlog(maxEvents = 2)
+        log.add(entry(3))
+        log.requeue(listOf(entry(1), entry(2)))
+        assertEquals(listOf(2L, 3L), log.snapshot().map { it.eventId })
+        assertEquals(1L, log.dropped)
+    }
 }

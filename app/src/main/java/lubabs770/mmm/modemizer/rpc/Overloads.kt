@@ -29,10 +29,12 @@ object Overloads {
         args: List<Any?>,
         sig: List<String>? = null,
         requireStatic: Boolean = false,
+        publicOnly: Boolean = false,
     ): Method {
         val named = allMethods(cls)
             .filter { it.name == name && !it.isBridge && !it.isSynthetic }
             .filter { !requireStatic || Modifier.isStatic(it.modifiers) }
+            .filter { !publicOnly || Modifier.isPublic(it.modifiers) }
         if (named.isEmpty()) {
             val what = if (requireStatic) "static method" else "method"
             throw NoMatch("no $what '$name' on ${cls.name}")
@@ -55,8 +57,15 @@ object Overloads {
         return pick(fitting, args, { it.parameterTypes }, { describe(it) })
     }
 
-    fun findConstructor(cls: Class<*>, args: List<Any?>, sig: List<String>? = null): Constructor<*> {
-        val all = cls.declaredConstructors.filter { !it.isSynthetic }
+    fun findConstructor(
+        cls: Class<*>,
+        args: List<Any?>,
+        sig: List<String>? = null,
+        publicOnly: Boolean = false,
+    ): Constructor<*> {
+        val all = cls.declaredConstructors
+            .filter { !it.isSynthetic }
+            .filter { !publicOnly || Modifier.isPublic(it.modifiers) }
         if (sig != null) {
             return all.firstOrNull { typeNames(it.parameterTypes) == sig }
                 ?: throw NoMatch(

@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Handler
+import android.os.HandlerThread
 import androidx.core.content.ContextCompat
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -63,7 +65,13 @@ class EventHub(
     private val subs = LinkedHashMap<String, Sub>()
     private val recentEvents = ArrayDeque<Long>()
     private val file = File(appContext.filesDir, "subscriptions.json")
+
+    @Volatile
     private var lastPersist = 0L
+
+    private val deliveryHandler: Handler by lazy {
+        Handler(HandlerThread("mmm-events").apply { start() }.looper)
+    }
 
     private val _state = MutableStateFlow<List<Info>>(emptyList())
     val state: StateFlow<List<Info>> = _state.asStateFlow()
@@ -159,6 +167,14 @@ class EventHub(
         publish()
     }
 
+    /** Returns events a client was sent during replay but never received. */
+    fun requeue(tokenId: String, name: String, undelivered: List<Backlog.Entry>) {
+        if (undelivered.isEmpty()) return
+        synchronized(lock) { subs[key(tokenId, name)]?.backlog?.requeue(undelivered) }
+        persist(force = true)
+        publish()
+    }
+
     fun clearBacklog(tokenId: String, name: String) {
         synchronized(lock) { subs[key(tokenId, name)]?.backlog?.clear() }
         persist(force = true)
@@ -223,7 +239,16 @@ class EventHub(
         }
         val filter = IntentFilter().apply { sub.actions.forEach { addAction(it) } }
         // System broadcasts come from outside the app, so the receiver has to be exported.
-        ContextCompat.registerReceiver(appContext, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
+        // Delivery writes to a socket and to disk, so it runs on its own thread: on the
+        // main thread a client that stops reading would freeze the whole app.
+        ContextCompat.registerReceiver(
+            appContext,
+            receiver,
+            filter,
+            null,
+            deliveryHandler,
+            ContextCompat.RECEIVER_EXPORTED,
+        )
         sub.receiver = receiver
     }
 

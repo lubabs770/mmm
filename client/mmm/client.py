@@ -12,6 +12,7 @@ the whole Android API is reachable without anything being wrapped by hand.
 from __future__ import annotations
 
 import base64
+import collections
 import itertools
 import json
 import queue
@@ -128,7 +129,16 @@ class Android:
         self._handlers: dict[str, Callable[[Any], None]] = {}
         self._proxy_handlers: dict[str, Callable[[str, list], Any]] = {}
         self._subscriptions: dict[str, dict] = {}
-        self._releases: list[int] = []
+        # A deque because __del__ appends from whatever thread the GC runs on, and
+        # its append and popleft are atomic without a lock a finalizer could deadlock on.
+        self._releases: collections.deque[int] = collections.deque()
+        # Bumped on every connection. Handles belong to one session, so an object from
+        # an earlier generation must never be sent to (or released on) a later one.
+        self._generation = 0
+        # Events and proxy calls are handled here, off the reader thread, so a
+        # handler may call the phone itself without waiting on its own reply.
+        self._inbox: queue.Queue[dict | None] = queue.Queue()
+        self._dispatcher: threading.Thread | None = None
         self._queue: queue.Queue[Event] | None = None
         self._closed = False
         self._connected = threading.Event()
@@ -147,11 +157,19 @@ class Android:
             connection = self._transport.connect()
             self._socket = connection
             self._closed = False
+            self._generation += 1
+            self._ensure_dispatcher()
             self._reader = threading.Thread(
                 target=self._read_loop, args=(connection,), name="mmm-reader", daemon=True
             )
             self._reader.start()
-        self.info = self._request("auth", token=self.profile.token)
+        try:
+            self.info = self._request("auth", token=self.profile.token)
+        except AndroidError as error:
+            if error.type == "unauthorized":
+                # Retrying a revoked token only fills the phone's activity log.
+                self.close()
+            raise
         self._connected.set()
         if resubscribe and self._subscriptions:
             # Durable subscriptions replay their backlog on resubscribe, so an SMS
@@ -177,6 +195,9 @@ class Android:
             connection.close()
         self._transport.close()
         self._fail_pending(NotConnected("connection closed"))
+        # Let this dispatcher finish; a later connect() starts a fresh one.
+        self._inbox.put(None)
+        self._dispatcher = None
 
     def __enter__(self) -> "Android":
         if self._socket is None:
@@ -189,6 +210,15 @@ class Android:
     @property
     def connected(self) -> bool:
         return self._socket is not None and not self._closed
+
+    @property
+    def closed(self) -> bool:
+        """True after close(): this object will not reconnect by itself any more."""
+        return self._closed
+
+    def wait_connected(self, timeout: float) -> bool:
+        """Waits for a reconnect in progress; True if the link is up."""
+        return self._connected.wait(timeout) and self.connected
 
     # ----------------------------------------------------------------- calls
 
@@ -353,7 +383,9 @@ class Android:
             interfaces = [interfaces]
         result = self._request("proxy", interfaces=list(interfaces))
         # The app picks the subscription name and tells us; events arrive under it.
-        listener = JavaObject(self, int(result["$h"]), result.get("cls", interfaces[0]))
+        listener = JavaObject(
+            self, int(result["$h"]), result.get("cls", interfaces[0]), self._generation
+        )
         self._proxy_handlers[result["sub"]] = handler
         return listener
 
@@ -388,11 +420,16 @@ class Android:
 
     # ----------------------------------------------------------------- handles
 
-    def _queue_release(self, handle: int) -> None:
-        if self._closed:
+    def _queue_release(self, handle: int, generation: int, flush: bool = True) -> None:
+        """Queues a handle for release; stale ones are dropped, never sent.
+
+        ``flush`` is False from ``__del__``: a finalizer can run in the middle of a
+        send on the same thread, and must not try to send itself.
+        """
+        if self._closed or generation != self._generation:
             return
         self._releases.append(handle)
-        if len(self._releases) >= RELEASE_BATCH:
+        if flush and len(self._releases) >= RELEASE_BATCH:
             self._flush_releases()
 
     def _flush_releases(self, force: bool = False) -> None:
@@ -400,7 +437,14 @@ class Android:
             return
         if not force and len(self._releases) < RELEASE_BATCH:
             return
-        batch, self._releases = self._releases, []
+        batch: list[int] = []
+        while True:
+            try:
+                batch.append(self._releases.popleft())
+            except IndexError:
+                break
+        if not batch:
+            return
         try:
             # Fire and forget: the reply carries nothing worth waiting for.
             self._send({"op": "release", "handles": batch})
@@ -411,6 +455,11 @@ class Android:
 
     def _to_wire(self, value: Any) -> Any:
         if isinstance(value, JavaObject):
+            if value._generation != self._generation:
+                raise NotConnected(
+                    f"{value!r} came from an earlier connection; handles do not survive "
+                    "a reconnect, so look the object up again"
+                )
             return {"$h": value.handle}
         if isinstance(value, JavaClassRef):
             # A class that came back from getClass() is usable as a target again.
@@ -428,7 +477,9 @@ class Android:
     def _from_wire(self, value: Any) -> Any:
         if isinstance(value, dict):
             if "$h" in value:
-                return JavaObject(self, int(value["$h"]), value.get("cls", "java.lang.Object"))
+                return JavaObject(
+                    self, int(value["$h"]), value.get("cls", "java.lang.Object"), self._generation
+                )
             if "$b64" in value:
                 return base64.b64decode(value["$b64"])
             if "$cls" in value:
@@ -460,7 +511,7 @@ class Android:
     def _dispatch(self, message: dict) -> None:
         op = message.get("op")
         if op == "event":
-            self._on_event(message)
+            self._inbox.put(message)
             return
         pending = self._pending.get(message.get("id"))
         if pending is None:
@@ -474,6 +525,26 @@ class Android:
         else:
             pending.value = message.get("value")
         pending.done.set()
+
+    def _ensure_dispatcher(self) -> None:
+        if self._dispatcher is not None and self._dispatcher.is_alive():
+            return
+        self._inbox = queue.Queue()
+        self._dispatcher = threading.Thread(
+            target=self._dispatch_loop, args=(self._inbox,), name="mmm-events", daemon=True
+        )
+        self._dispatcher.start()
+
+    def _dispatch_loop(self, inbox: "queue.Queue[dict | None]") -> None:
+        """Runs handlers one event at a time, in arrival order."""
+        while True:
+            message = inbox.get()
+            if message is None:
+                return
+            try:
+                self._on_event(message)
+            except Exception as error:  # nothing here may stop later events
+                self._log_handler_error(str(message.get("sub", "")), error)
 
     def _on_event(self, message: dict) -> None:
         sub = message.get("sub", "")
@@ -577,12 +648,14 @@ class JavaClassRef:
 class JavaObject:
     """A Java object living in the app, referenced by handle."""
 
-    __slots__ = ("_client", "handle", "cls", "__weakref__")
+    __slots__ = ("_client", "handle", "cls", "_generation", "__weakref__")
 
-    def __init__(self, client: Android, handle: int, cls: str) -> None:
+    def __init__(self, client: Android, handle: int, cls: str, generation: int | None = None) -> None:
         self._client = client
         self.handle = handle
         self.cls = cls
+        #: The connection this handle belongs to; see ``Android._generation``.
+        self._generation = client._generation if generation is None else generation
 
     def __getattr__(self, name: str) -> "Member":
         if name.startswith("_"):
@@ -603,14 +676,14 @@ class JavaObject:
         return self._client.expand(self)
 
     def release(self) -> None:
-        self._client._queue_release(self.handle)
+        self._client._queue_release(self.handle, self._generation)
 
     def __repr__(self) -> str:
         return f"<{self.cls} #{self.handle}>"
 
     def __del__(self) -> None:
         try:
-            self._client._queue_release(self.handle)
+            self._client._queue_release(self.handle, self._generation, flush=False)
         except Exception:
             pass
 

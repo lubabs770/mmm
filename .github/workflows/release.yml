@@ -72,6 +72,12 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.MMM_KEYSTORE_BASE64 }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
+            if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+              # A published release must be signed with the release key, or users
+              # could never upgrade from it to a signed one.
+              echo "::error::MMM_KEYSTORE_BASE64 is not set; refusing to publish an unsigned release"
+              exit 1
+            fi
             echo "signed=false" >> "$GITHUB_OUTPUT"
             echo "::warning::MMM_KEYSTORE_BASE64 is not set; building an unsigned APK"
           else

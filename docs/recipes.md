@@ -56,34 +56,30 @@ Watches call state, and with a priv-app install can act on it:
 from mmm import Android
 
 a = Android()
-tm = a.context.getSystemService("phone")
+facade = a.cls("lubabs770.mmm.modemizer.rpc.Facade")
 
-def on_call(method, args):
-    if method != "onCallStateChanged":
-        return None
-    state, number = args[0], args[1]
-    # 0 IDLE, 1 RINGING, 2 OFFHOOK
-    if state == 1:
-        print("ringing:", number)
-        known = a.call(
-            a.cls("lubabs770.mmm.modemizer.rpc.Facade"),
-            "contactsSearch", a.context, number or "", 1,
-        )
-        if not known:
-            print("not in contacts")
-            # Needs the Magisk module (MODIFY_PHONE_STATE):
-            # telecom = a.context.getSystemService("telecom")
-            # a.call(telecom, "endCall", main=True)
-    return None
-
-listener = a.proxy("android.telephony.PhoneStateListener", on_call)
-a.call(tm, "listen", listener, 32, main=True)   # LISTEN_CALL_STATE
+@a.on("android.intent.action.PHONE_STATE", durable="calls")
+def on_call(intent):
+    extras = intent["extras"]
+    # "RINGING", "OFFHOOK" or "IDLE"; the number needs READ_CALL_LOG.
+    if extras.get("state") != "RINGING":
+        return
+    number = extras.get("incoming_number") or ""
+    print("ringing:", number)
+    known = a.call(facade, "contactsSearch", a.context, number, 1)
+    if not known:
+        print("not in contacts")
+        # Needs the Magisk module (MODIFY_PHONE_STATE):
+        # telecom = a.context.getSystemService("telecom")
+        # a.call(telecom, "endCall", main=True)
 
 a.run()
 ```
 
-`listen()` wants the main Looper, hence `main=True`. The proxy must stay referenced
-for as long as you want callbacks; dropping it releases the Java object.
+Call state arrives as a broadcast, so this is a plain subscription. (The older
+`PhoneStateListener` is a class, not an interface, so it can't be a proxy; see
+[Java listeners](python.md#java-listeners-proxies).) Handlers run on their own
+thread, which is why calling the phone from inside one is fine.
 
 ## A notification forwarder
 

@@ -39,7 +39,6 @@ fun ClientsScreen(primary: FocusRequester) {
     val context = LocalContext.current
     val tokens = remember { MmmRuntime.tokens(context) }
     val audit = remember { MmmRuntime.audit(context) }
-    val events = remember { MmmRuntime.events(context) }
     val clients by tokens.clients.collectAsStateWithLifecycle()
 
     var pairing by remember { mutableStateOf(false) }
@@ -65,11 +64,7 @@ fun ClientsScreen(primary: FocusRequester) {
                 InfoRow("Last seen", formatAge(client.lastSeen))
                 Spacer(Modifier.height(6.dp))
                 TextButton(
-                    onClick = {
-                        tokens.revoke(client.id)
-                        events.dropForToken(client.id)
-                        audit.log(AuditLog.Kind.REVOKE, "revoked ${client.label}", client.id)
-                    },
+                    onClick = { MmmRuntime.revokeClient(context, client.id) },
                     modifier = Modifier.focusHighlight(),
                 ) {
                     Text("Revoke", color = MaterialTheme.colorScheme.error)
