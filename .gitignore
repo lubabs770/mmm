@@ -1,6 +1,10 @@
 .gradle/
 build/
 local.properties
+# Signing keys never belong in the repo — except the public debug one.
+*.jks
+*.p12
+!app/keys/debug.p12
 *.iml
 .idea/
 __pycache__/

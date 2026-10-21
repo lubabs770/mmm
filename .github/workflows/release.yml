@@ -32,9 +32,19 @@ jobs:
           major=$(echo "$core" | cut -d. -f1); minor=$(echo "$core" | cut -d. -f2); patch=$(echo "$core" | cut -d. -f3)
           code=$(( ${major:-0} * 10000 + ${minor:-0} * 100 + ${patch:-0} ))
           [ "$code" -gt 0 ] || code=1
+
+          # Python insists on PEP 440, which Android version names do not follow:
+          # 0.1.0-rc1 becomes 0.1.0rc1, and anything else keeps its suffix as a
+          # local version (0.0.0-test -> 0.0.0+test).
+          py=$(echo "$name" | sed -E 's/-(rc|a|b)/\1/')
+          if ! echo "$py" | grep -qE '^[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?$'; then
+            py="${core}+$(echo "${name#"$core"}" | tr -cd 'A-Za-z0-9')"
+          fi
+
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "building $name (versionCode $code)"
+          echo "py=$py" >> "$GITHUB_OUTPUT"
+          echo "building $name (versionCode $code, python $py)"
 
       - uses: actions/setup-java@v4
         with:
@@ -65,13 +75,13 @@ jobs:
             echo "signed=false" >> "$GITHUB_OUTPUT"
             echo "::warning::MMM_KEYSTORE_BASE64 is not set; building an unsigned APK"
           else
-            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: build the universal apk
         env:
-          MMM_KEYSTORE_FILE: ${{ steps.signing.outputs.signed == 'true' && format('{0}/release.jks', runner.temp) || '' }}
+          MMM_KEYSTORE_FILE: ${{ steps.signing.outputs.signed == 'true' && format('{0}/release.p12', runner.temp) || '' }}
           MMM_KEYSTORE_PASSWORD: ${{ secrets.MMM_KEYSTORE_PASSWORD }}
           MMM_KEY_ALIAS: ${{ secrets.MMM_KEY_ALIAS }}
           MMM_KEY_PASSWORD: ${{ secrets.MMM_KEY_PASSWORD }}
@@ -97,7 +107,7 @@ jobs:
 
       - name: build the python wheel and the single-file pyz
         run: |
-          version="${{ steps.version.outputs.name }}"
+          version="${{ steps.version.outputs.py }}"
           sed -i "s/^version = \".*\"/version = \"$version\"/" client/pyproject.toml
           sed -i "s/^__version__ = \".*\"/__version__ = \"$version\"/" client/mmm/__init__.py
           grep -m1 '^version' client/pyproject.toml

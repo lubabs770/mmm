@@ -22,13 +22,26 @@ android {
     }
 
     signingConfigs {
-        // Release signing key comes from CI secrets, decoded to app/release.jks by the
-        // workflow. Never committed: a leaked key could sign an "update" to a
-        // privileged app with full phone access.
+        // The standard Android debug identity (public password "android"), committed
+        // on purpose: Gradle otherwise generates a fresh debug key on every machine,
+        // so two CI builds would have different signatures and `adb install -r`
+        // between them would fail. These are test builds; the tradeoff is accepted.
+        getByName("debug") {
+            storeFile = file("keys/debug.p12")
+            storeType = "PKCS12"
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+
+        // The release key comes from CI secrets, decoded to a file by the workflow.
+        // Never committed: whoever holds it can sign an "update" that replaces a
+        // privileged app holding SMS, contacts and call control.
         create("release") {
             val store = System.getenv("MMM_KEYSTORE_FILE")
             if (store != null) {
                 storeFile = file(store)
+                storeType = "PKCS12"
                 storePassword = System.getenv("MMM_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("MMM_KEY_ALIAS")
                 keyPassword = System.getenv("MMM_KEY_PASSWORD")
@@ -37,6 +50,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             if (System.getenv("MMM_KEYSTORE_FILE") != null) {
