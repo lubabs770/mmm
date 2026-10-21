@@ -1,4 +1,3 @@
-
 package lubabs770.mmm.modemizer
 
 import android.app.admin.DeviceAdminReceiver
