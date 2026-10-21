@@ -7,6 +7,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.concurrent.thread
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -89,6 +90,14 @@ class RpcServer(
                 break
             }
             runCatching { connection.tcpNoDelay = true }
+            if (sessions.count { !it.authenticated } >= MAX_UNAUTHENTICATED) {
+                // Anything on the phone can open a loopback connection; refuse a pile
+                // of them that never authenticate. Logcat only: a flood of these must
+                // not push real entries out of the Activity log.
+                Log.w(TAG, "too many connections waiting to authenticate; refused one")
+                runCatching { connection.close() }
+                continue
+            }
             // A connection that dies between accept and setup must not take the
             // accept loop — and so the whole server — down with it.
             val session = try {
@@ -113,8 +122,15 @@ class RpcServer(
             sessions.add(session)
             publishClients()
             audit.log(AuditLog.Kind.CONNECT, "connection accepted on $LOOPBACK:${socket.localPort}")
-            scope.launch { session.run() }
+            // A thread of its own, not a pooled coroutine: a session blocks on its
+            // socket for its whole life and must not use up a shared pool.
+            thread(name = "mmm-session-${session.sessionId}", isDaemon = true) { session.run() }
         }
+    }
+
+    /** Closes every live session of a token, for when it is revoked. */
+    fun disconnectToken(tokenId: String) {
+        sessions.filter { it.clientId == tokenId }.forEach { it.close() }
     }
 
     fun stop() {
@@ -159,5 +175,6 @@ class RpcServer(
         const val LOOPBACK = "127.0.0.1"
         const val PROTOCOL_VERSION = 1
         private const val BACKLOG = 8
+        private const val MAX_UNAUTHENTICATED = 16
     }
 }

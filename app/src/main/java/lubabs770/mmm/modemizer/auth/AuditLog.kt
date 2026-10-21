@@ -52,12 +52,14 @@ class AuditLog private constructor(private val file: File) {
 
     fun log(kind: Kind, detail: String, client: String? = null) {
         val entry = Entry(System.currentTimeMillis(), kind, client, detail)
-        _entries.value = (_entries.value + entry).takeLast(MAX_ENTRIES)
-        save()
+        synchronized(this) {
+            _entries.value = (_entries.value + entry).takeLast(MAX_ENTRIES)
+            save()
+        }
     }
 
     /** Counts a method call without recording its arguments. */
-    fun countCall(clientId: String) {
+    fun countCall(clientId: String) = synchronized(this) {
         val counts = _callCounts.value.toMutableMap()
         counts[clientId] = (counts[clientId] ?: 0L) + 1
         _callCounts.value = counts
@@ -69,7 +71,10 @@ class AuditLog private constructor(private val file: File) {
         }
     }
 
-    fun clear() {
+    /** Writes any call counts still waiting for the next throttled flush. */
+    fun flush() = synchronized(this) { save() }
+
+    fun clear() = synchronized(this) {
         _entries.value = emptyList()
         _callCounts.value = emptyMap()
         save()

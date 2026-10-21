@@ -136,8 +136,21 @@ def parse(text: str) -> Config:
 def save(config: Config, path: Path | None = None) -> Path:
     path = path or config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(config.to_toml(), encoding="utf-8")
-    # The file holds tokens that grant full control of the phone.
+    # The file holds tokens that grant full control of the phone, so it is created
+    # 0600 from the first byte (never written wider and tightened afterwards), and
+    # swapped in whole so a crash cannot leave half a file.
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(config.to_toml())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     os.chmod(path, 0o600)
     return path
 

@@ -49,6 +49,21 @@ class Backlog(
         out
     }
 
+    /**
+     * Puts back events that were drained but never reached the client, ahead of
+     * anything that arrived since. Still bounded by [maxEvents].
+     */
+    fun requeue(undelivered: List<Entry>) = synchronized(entries) {
+        val merged = (undelivered + entries).distinctBy { it.eventId }.sortedBy { it.eventId }
+        entries.clear()
+        merged.forEach { entries.addLast(it) }
+        while (entries.size > maxEvents) {
+            entries.removeFirst()
+            dropped++
+        }
+        prune()
+    }
+
     fun restore(saved: List<Entry>) = synchronized(entries) {
         entries.clear()
         saved.sortedBy { it.eventId }.takeLast(maxEvents).forEach { entries.addLast(it) }

@@ -34,7 +34,12 @@ object ProxyFactory {
         require(interfaceNames.isNotEmpty()) { "proxy needs at least one interface" }
         val interfaces = interfaceNames.map { name ->
             val cls = Class.forName(name)
-            require(cls.isInterface) { "$name is not an interface" }
+            require(cls.isInterface) {
+                // java.lang.reflect.Proxy can only implement interfaces. Many Android
+                // listeners (PhoneStateListener, BroadcastReceiver…) are classes.
+                "$name is a class, not an interface; a proxy can only implement interfaces " +
+                    "(for broadcasts, use subscribe instead)"
+            }
             cls
         }.toTypedArray()
         val subscription = "proxy#${Ids.nextProxy()}"
@@ -70,12 +75,17 @@ object ProxyFactory {
 
             val returns = method.returnType
             if (returns == Void.TYPE) {
-                target.emit(subscription, Ids.nextEvent(), System.currentTimeMillis(), payload)
+                // emit throws once the client is gone; that must not reach the
+                // framework code that called this listener.
+                runCatching { target.emit(subscription, Ids.nextEvent(), System.currentTimeMillis(), payload) }
                 return null
             }
             val reply = runCatching { target.emitAwaitingReply(subscription, payload, timeoutMs) }
                 .getOrNull()
-            return Overloads.coerce(returns, reply) ?: defaultValue(returns)
+            // A reply of the wrong type would surface as a ClassCastException inside
+            // whatever framework code called the listener; the default is safer.
+            if (reply == null || !Overloads.fits(returns, reply)) return defaultValue(returns)
+            return runCatching { Overloads.coerce(returns, reply) }.getOrNull() ?: defaultValue(returns)
         }
 
         private fun defaultValue(type: Class<*>): Any? = when (type) {

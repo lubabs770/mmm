@@ -24,6 +24,11 @@ from .client import Android, MmmError
 PROTOCOL_VERSION = "2024-11-05"
 FACADE = "lubabs770.mmm.modemizer.rpc.Facade"
 
+#: How long a tool call waits for a dropped link to come back.
+RECONNECT_WAIT = 10.0
+#: events_wait blocks the whole server, so an assistant cannot ask for hours.
+MAX_WAIT = 300.0
+
 #: Subscription names an assistant can ask to wait on without knowing the action.
 KNOWN_SUBSCRIPTIONS = {
     "sms": ["android.provider.Telephony.SMS_RECEIVED"],
@@ -45,8 +50,12 @@ class Bridge:
     @property
     def android(self) -> Android:
         with self._lock:
-            if self._android is None or not self._android.connected:
+            if self._android is None or self._android.closed:
                 self._android = Android(self.profile)
+            elif not self._android.wait_connected(RECONNECT_WAIT):
+                # Keep the one connection and let it reconnect: a second one would
+                # not carry this bridge's subscriptions.
+                raise MmmError("the phone is not reachable right now; still reconnecting")
             return self._android
 
     def close(self) -> None:
@@ -212,7 +221,8 @@ def build_handlers(bridge: Bridge) -> dict[str, Callable[[dict], Any]]:
         name = arguments.get("subscription", "sms")
         actions = arguments.get("actions")
         bridge.ensure_subscription(name, actions)
-        events = bridge.wait_for_events(name, float(arguments.get("timeout", 30)))
+        timeout = min(max(float(arguments.get("timeout", 30)), 0.0), MAX_WAIT)
+        events = bridge.wait_for_events(name, timeout)
         return {"subscription": name, "events": events}
 
     def android_call(arguments: dict) -> Any:

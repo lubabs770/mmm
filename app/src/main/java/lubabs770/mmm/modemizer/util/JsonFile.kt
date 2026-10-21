@@ -2,6 +2,9 @@ package lubabs770.mmm.modemizer.util
 
 import android.util.Log
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import org.json.JSONObject
 
 /**
@@ -25,18 +28,35 @@ object JsonFile {
         }
     }
 
+    /**
+     * Replaces [file] with [obj]. Writers of the same file are serialised, and each
+     * uses its own temporary file, so two threads saving at once can never interleave
+     * into a corrupt document.
+     */
     fun write(file: File, obj: JSONObject) {
-        try {
-            file.parentFile?.mkdirs()
-            val tmp = File(file.parentFile, "${file.name}.tmp")
-            tmp.writeText(obj.toString())
-            // rename(2) replaces the target atomically on the same filesystem.
-            if (!tmp.renameTo(file)) {
-                file.writeText(tmp.readText())
-                tmp.delete()
+        val text = obj.toString()
+        synchronized(lockFor(file)) {
+            var tmp: File? = null
+            try {
+                val dir = file.absoluteFile.parentFile ?: return
+                dir.mkdirs()
+                tmp = File.createTempFile("${file.name}.", ".tmp", dir)
+                FileOutputStream(tmp).use { out ->
+                    out.write(text.toByteArray(Charsets.UTF_8))
+                    out.fd.sync()
+                }
+                // rename(2) replaces the target atomically on the same filesystem.
+                if (!tmp.renameTo(file)) throw IOException("rename to ${file.name} failed")
+                tmp = null
+            } catch (e: Exception) {
+                Log.e(TAG, "could not save ${file.name}", e)
+            } finally {
+                tmp?.delete()
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "could not save ${file.name}", e)
         }
     }
+
+    private val locks = ConcurrentHashMap<String, Any>()
+
+    private fun lockFor(file: File): Any = locks.getOrPut(file.absolutePath) { Any() }
 }

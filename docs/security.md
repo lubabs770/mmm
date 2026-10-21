@@ -13,6 +13,9 @@ Everything below follows from taking that seriously.
   before any MMM traffic exists.
 - **A token on top.** The first message on every connection must be `auth`, and a
   wrong token closes the connection and is logged.
+- **No free waiting room.** Any app on the phone can open a loopback connection, so
+  one that hasn't authenticated gets 10 seconds and a 64 KiB line, and at most 16 may
+  wait at once. That keeps an unpaired app from tying the server up.
 
 On a rooted phone, any app running as root can reach a loopback port, and any app
 with your token can use it. MMM does not defend against code you have already given
@@ -25,8 +28,8 @@ root to.
   cannot be turned back into a working token. Comparison is constant-time.
 - The client id shown in the UI is its own random value, revealing nothing about the
   token.
-- Revoking one takes effect immediately for new connections and drops its durable
-  subscriptions.
+- Revoking one takes effect immediately: its open connections are closed, new ones
+  are refused, and its durable subscriptions are dropped.
 - The client stores tokens in `~/.config/mmm/config.toml`, mode `600`. Treat that
   file the way you treat an SSH private key.
 
@@ -40,6 +43,10 @@ client gains nothing.
 Scoped tokens cannot create proxies, because a Java listener can reach whatever the
 listener's own API exposes.
 
+A scoped pattern reaches only **public** members — reflection could otherwise force
+open a class's private methods and fields too — and scoped tokens cannot `expand`,
+which would run every getter of an object without checking any of them.
+
 The assistant preset points at one class, `Facade`, whose methods are the curated
 operations. That is deliberate: a short allow-list is one you can actually read.
 
@@ -49,6 +56,11 @@ Release APKs are signed with a key kept in CI secrets and **never committed**. A
 leaked signing key would let anyone sign an "update" that replaces a privileged app
 holding SMS, contacts and call-control permissions. Debug builds use a different key,
 so a debug APK cannot silently upgrade a release install.
+
+That debug key is committed to the repository, so it is public: anyone can sign an
+APK that installs over a **debug** build and inherits its permissions and data. Debug
+builds are for testing; run a release build on a phone you care about. A tagged
+release refuses to publish if the release key is missing.
 
 ## Privileged permissions
 

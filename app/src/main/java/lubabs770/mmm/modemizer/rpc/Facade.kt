@@ -4,9 +4,11 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ContentResolver
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.provider.CallLog
 import android.provider.ContactsContract
 import android.provider.Telephony
@@ -182,18 +184,34 @@ object Facade {
     ): List<Map<String, Any?>> {
         val rows = ArrayList<Map<String, Any?>>()
         val capped = limit.coerceIn(1, 1000)
-        context.contentResolver.query(
-            uri, columns, selection, selectionArgs, "$sortColumn DESC LIMIT $capped"
-        )?.use { cursor ->
-            while (cursor.moveToNext()) {
+        val cursor = if (Build.VERSION.SDK_INT >= 26) {
+            // Newer providers (CallLog among them) reject "LIMIT" smuggled into the
+            // sort order; the query-args Bundle is the supported way to ask. A provider
+            // that ignores QUERY_ARG_LIMIT is still capped by the loop below.
+            val args = Bundle().apply {
+                putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, "$sortColumn DESC")
+                putInt(ContentResolver.QUERY_ARG_LIMIT, capped)
+                if (selection != null) putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                if (selectionArgs != null) {
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+                }
+            }
+            context.contentResolver.query(uri, columns, args, null)
+        } else {
+            context.contentResolver.query(
+                uri, columns, selection, selectionArgs, "$sortColumn DESC LIMIT $capped"
+            )
+        }
+        cursor?.use { c ->
+            while (rows.size < capped && c.moveToNext()) {
                 val row = LinkedHashMap<String, Any?>()
-                for (i in 0 until cursor.columnCount) {
-                    row[cursor.getColumnName(i)] = when (cursor.getType(i)) {
+                for (i in 0 until c.columnCount) {
+                    row[c.getColumnName(i)] = when (c.getType(i)) {
                         android.database.Cursor.FIELD_TYPE_NULL -> null
-                        android.database.Cursor.FIELD_TYPE_INTEGER -> cursor.getLong(i)
-                        android.database.Cursor.FIELD_TYPE_FLOAT -> cursor.getDouble(i)
-                        android.database.Cursor.FIELD_TYPE_BLOB -> cursor.getBlob(i)
-                        else -> cursor.getString(i)
+                        android.database.Cursor.FIELD_TYPE_INTEGER -> c.getLong(i)
+                        android.database.Cursor.FIELD_TYPE_FLOAT -> c.getDouble(i)
+                        android.database.Cursor.FIELD_TYPE_BLOB -> c.getBlob(i)
+                        else -> c.getString(i)
                     }
                 }
                 rows.add(row)

@@ -53,6 +53,11 @@ class FakeServer:
                 response = self.handler(self, request)
                 if response is not None:
                     self.send(response, connection)
+                if request.get("op") == "auth" and (response or {}).get("op") == "error":
+                    # Like the app: a rejected auth ends the connection.
+                    connection.shutdown(socket.SHUT_RDWR)
+                    connection.close()
+                    return
         except OSError:
             pass
 

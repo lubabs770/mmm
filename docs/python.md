@@ -158,15 +158,24 @@ Good for pipelines; `mmm watch` is this with `json.dumps` around it.
 method calls arrive as events:
 
 ```python
+sensors = a.context.getSystemService("sensor")
+light = sensors.getDefaultSensor(5)          # Sensor.TYPE_LIGHT
+
 def listener(method, args):
-    print(method, args)
+    if method == "onSensorChanged":
+        print("lux:", args[0]["values"][0])
     return None
 
-phone_state = a.proxy("android.telephony.PhoneStateListener", listener)
-a.call(tm, "listen", phone_state, 32, main=True)
+on_light = a.proxy("android.hardware.SensorEventListener", listener)
+a.call(sensors, "registerListener", on_light, light, 3, main=True)   # SENSOR_DELAY_NORMAL
 ```
 
-The handler is called as `handler(method_name, args)` on the reader thread. A `void`
+Only **interfaces** can be proxied — that is all `java.lang.reflect.Proxy` can do.
+Plenty of Android listeners are abstract classes instead (`PhoneStateListener`,
+`BroadcastReceiver`); for broadcasts, use `subscribe`.
+
+The handler is called as `handler(method_name, args)` on the client's event thread
+(one thread, so handlers run one at a time, in order), and may call the phone itself. A `void`
 method returns at once; anything else waits for your return value, with a timeout
 (2 s by default) after which Java gets a harmless default — an Android callback that
 never returns can take the system service down with it.

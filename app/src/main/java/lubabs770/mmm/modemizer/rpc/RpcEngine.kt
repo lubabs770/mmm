@@ -9,6 +9,9 @@ import java.lang.reflect.Modifier
  *
  * Targets are either a `Class` (a static call) or an instance. Nothing here knows
  * about sockets, sessions or JSON — [Session] marshals around it.
+ *
+ * `publicOnly` is set for scoped tokens: their allow-list names a class, and that
+ * must not quietly include the private members reflection could otherwise force open.
  */
 object RpcEngine {
 
@@ -23,34 +26,40 @@ object RpcEngine {
         return Class.forName(trimmed, false, RpcEngine::class.java.classLoader)
     }
 
-    fun construct(className: String, args: List<Any?>, sig: List<String>?): Any {
+    fun construct(className: String, args: List<Any?>, sig: List<String>?, publicOnly: Boolean = false): Any {
         val cls = resolveClass(className)
-        val ctor = Overloads.findConstructor(cls, args, sig)
+        val ctor = Overloads.findConstructor(cls, args, sig, publicOnly)
         val coerced = Overloads.coerceArgs(ctor.parameterTypes, args)
         if (!ctor.isAccessible) runCatching { ctor.isAccessible = true }
         return unwrap { ctor.newInstance(*coerced) }!!
     }
 
-    fun call(target: Any, methodName: String, args: List<Any?>, sig: List<String>?): Any? {
+    fun call(
+        target: Any,
+        methodName: String,
+        args: List<Any?>,
+        sig: List<String>?,
+        publicOnly: Boolean = false,
+    ): Any? {
         val static = target is Class<*>
         val cls = if (static) target as Class<*> else target.javaClass
-        val method = Overloads.findMethod(cls, methodName, args, sig, requireStatic = static)
+        val method = Overloads.findMethod(cls, methodName, args, sig, requireStatic = static, publicOnly = publicOnly)
         val coerced = Overloads.coerceArgs(method.parameterTypes, args)
         val receiver = if (Modifier.isStatic(method.modifiers)) null else target
         return unwrap { method.invoke(receiver, *coerced) }
     }
 
-    fun getField(target: Any, fieldName: String): Any? {
+    fun getField(target: Any, fieldName: String, publicOnly: Boolean = false): Any? {
         val static = target is Class<*>
         val cls = if (static) target as Class<*> else target.javaClass
-        val field = findField(cls, fieldName)
+        val field = findField(cls, fieldName, publicOnly)
         return unwrap { field.get(if (Modifier.isStatic(field.modifiers)) null else target) }
     }
 
-    fun setField(target: Any, fieldName: String, value: Any?) {
+    fun setField(target: Any, fieldName: String, value: Any?, publicOnly: Boolean = false) {
         val static = target is Class<*>
         val cls = if (static) target as Class<*> else target.javaClass
-        val field = findField(cls, fieldName)
+        val field = findField(cls, fieldName, publicOnly)
         val coerced = Overloads.coerce(field.type, value)
         unwrap { field.set(if (Modifier.isStatic(field.modifiers)) null else target, coerced) }
     }
@@ -59,7 +68,15 @@ object RpcEngine {
     fun targetClassName(target: Any): String =
         if (target is Class<*>) target.name else target.javaClass.name
 
-    private fun findField(cls: Class<*>, name: String): Field {
+    private fun findField(cls: Class<*>, name: String, publicOnly: Boolean): Field {
+        val field = findAnyField(cls, name)
+        if (publicOnly && !Modifier.isPublic(field.modifiers)) {
+            throw NoSuchFieldException("no public field '$name' on ${cls.name}")
+        }
+        return field
+    }
+
+    private fun findAnyField(cls: Class<*>, name: String): Field {
         var next: Class<*>? = cls
         while (next != null) {
             val c: Class<*> = next

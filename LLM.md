@@ -42,14 +42,19 @@ Breaking one of these is a bug even if everything compiles.
    live-only and never buffered.
 3. **Handles belong to a session.** They are freed on `release` and when the
    connection ends. Nothing may hand a handle to another session, and the client
-   must not assume one survives a reconnect.
+   must not assume one survives a reconnect. Handle numbers come from one
+   process-wide counter so a stale one is unknown rather than someone else's
+   object; the Python client also tags each `JavaObject` with its connection.
 4. **The listener binds `127.0.0.1` only.** Never a network interface, never
    `0.0.0.0`. Remote access is SSH or `adb forward`.
 5. **`auth` is the first message or the connection closes.** No op is answered
-   before it.
+   before it, and it must arrive within 10 s in a small line. Revoking a token
+   closes its live sessions (`MmmRuntime.revokeClient`), and `Session` re-checks the
+   token on every request.
 6. **Scopes are enforced in the app.** `Session.requireScope` guards `call`, `new`,
-   `get` and `set`; `subscribe` checks each action. A new op that reaches Java needs
-   its own check. Never move enforcement into the client.
+   `get` and `set`; `subscribe` checks each action. Scoped tokens only reach public
+   members (`publicOnly`) and cannot `expand`. A new op that reaches Java needs its
+   own check. Never move enforcement into the client.
 7. **The priv-app allowlist is generated from the manifest.** Edit the manifest's
    `<!-- privileged -->` block; `magisk/gen_privapp_xml.py` does the rest. A
    hand-edited allowlist that falls behind the manifest can stop a phone booting.
@@ -78,8 +83,12 @@ Session.execute → RpcEngine (resolveClass / construct / call / getField / setF
 ```
 
 Events run the other way: `EventHub` registers a `BroadcastReceiver` per
-subscription, expands the `Intent` to JSON and either emits it to the attached
-session or buffers it in that subscription's `Backlog`. `ProxyFactory` builds a
+subscription (on its own `mmm-events` thread, never the main one), expands the
+`Intent` to JSON and either emits it to the attached session or buffers it in that
+subscription's `Backlog` — including when the emit fails, which is why
+`Session.emit` throws instead of dropping. On the Python side, the reader thread
+only reads; events and proxy calls run on a separate dispatcher thread so a
+handler can call the phone. `ProxyFactory` builds a
 `java.lang.reflect.Proxy` whose `InvocationHandler` emits an event and, for a method
 that returns a value, blocks until the client's `reply` or the timeout.
 

@@ -259,7 +259,7 @@ The version comes from the tag and is written into the APK `versionName`/`versio
   2. Signal level through `TelephonyManager`.
   3. `SmsManager.sendTextMessage` delivers to a test number.
   4. `mmm watch SMS_RECEIVED --durable sms`: text the phone and the event appears. Disconnect, text again, reconnect, and the backlog replays.
-  5. A proxy `PhoneStateListener` reports an incoming call's state.
+  5. A durable `PHONE_STATE` subscription reports an incoming call's state, and a proxy `SensorEventListener` reports light-sensor readings.
   6. As priv-app: answer and end a call (`TelecomManager.acceptRingingCall` / `endCall`), and read privileged phone state.
   7. From a remote computer over `--ssh`: same as 1–4, and the tunnel recovers after Wi-Fi drops.
   8. UI fully operable with D-pad only (emulator with a keyboard, plus a keypad phone) and with touch.

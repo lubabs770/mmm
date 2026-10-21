@@ -69,4 +69,16 @@ class HandleTableTest {
         table.clear()
         assertEquals(0, table.size)
     }
+
+    @Test
+    fun `two tables never hand out the same number`() {
+        // A reconnecting client may still hold handles from its old session; they must
+        // be unknown to the new one, not name some other object.
+        val old = HandleTable()
+        val new = HandleTable()
+        val fromOld = (1..5).map { old.put(Any()) }.toSet()
+        val fromNew = (1..5).map { new.put(Any()) }.toSet()
+        assertTrue(fromOld.intersect(fromNew).isEmpty())
+        fromOld.forEach { assertNull(new.get(it)) }
+    }
 }

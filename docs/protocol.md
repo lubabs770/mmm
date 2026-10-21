@@ -163,8 +163,8 @@ event may be replayed into a session that did not create it.
 ### Proxies
 
 ```json
-{"op":"proxy","id":9,"interfaces":["android.telephony.PhoneStateListener"]}
-{"op":"result","id":9,"value":{"$h":77,"cls":"android.telephony.PhoneStateListener","sub":"proxy#1"}}
+{"op":"proxy","id":9,"interfaces":["android.os.Handler$Callback"]}
+{"op":"result","id":9,"value":{"$h":77,"cls":"android.os.Handler$Callback","sub":"proxy#1"}}
 ```
 
 Pass handle 77 wherever Java wants that listener. Its calls arrive as events under
@@ -172,13 +172,15 @@ Pass handle 77 wherever Java wants that listener. Its calls arrive as events und
 
 ```json
 {"op":"event","sub":"proxy#1","event_id":42,"ts":…,"needs_reply":true,
- "payload":{"proxy":"proxy#1","method":"onCallStateChanged","sig":["int","java.lang.String"],"args":[1,"555…"]}}
+ "payload":{"proxy":"proxy#1","method":"handleMessage","sig":["android.os.Message"],"args":[{"$pojo":"android.os.Message","what":1,…}]}}
 ```
 
 - `needs_reply` is absent for `void` methods; just handle them.
 - When it is set, send `{"op":"reply","event_id":42,"value":…}`. If nothing arrives
   within the proxy reply timeout (2 s by default), Java gets a default value —
   `false`, `0`, `null` — because a blocked callback can take a system service down.
+- A reply that doesn't fit the method's return type is treated like no reply.
+- Only interfaces can be proxied; naming a class is an error.
 - `proxy` needs a full-scope token, and proxy events are never buffered: they carry
   session handles and a reply has nowhere to go once the client is gone.
 
@@ -189,9 +191,18 @@ A scoped token's allow-list is checked on `call`, `new`, `get` and `set` against
 matches any run of characters. A rejection is a `java.lang.SecurityException` and an
 entry in the Activity log.
 
+For a scoped token, an allowed pattern only reaches **public** members, and `expand`
+(the op or the `$expand` flag) is refused, because expanding runs every getter of an
+object without checking any of them.
+
+A token revoked in the app is cut off at once: its open connections close, and a
+request already on its way gets an `unauthorized` error.
+
 ## Limits
 
-- One handle table per session, capped (50 000 by default).
+- One handle table per session, capped (50 000 by default). Handle numbers are unique
+  across sessions, so a handle from an earlier connection is simply unknown.
 - The listener binds `127.0.0.1` only, with a backlog of 8.
-- Requests are a single line each; there is no maximum length, but the whole line is
-  buffered, so don't send a 100 MB `byte[]`.
+- `auth` must arrive within 10 seconds, in a line of at most 64 KiB; at most 16
+  connections may be waiting to authenticate at once.
+- After that, a request line may be up to 32 MiB.
