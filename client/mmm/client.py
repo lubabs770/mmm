@@ -15,6 +15,7 @@ import base64
 import collections
 import itertools
 import json
+import math
 import queue
 import socket
 import threading
@@ -380,8 +381,13 @@ class Android:
     def proxy(self, interfaces: str | list[str], handler: Callable[[str, list], Any]) -> "JavaObject":
         """A Java object implementing [interfaces] whose calls go to [handler].
 
-        The handler is called as ``handler(method_name, args)`` on the reader thread.
-        Whatever it returns is sent back for methods that need a value.
+        The handler is called as ``handler(method_name, args)``. Methods that return
+        a value run on a thread of their own, so the handler may call the phone even
+        if that call fires this listener again; whatever it returns is sent back.
+        ``void`` methods run in order on the event thread. The phone waits only
+        ``proxy_reply_timeout_ms`` for a value; and a callback the framework makes on
+        its main thread blocks that thread while it waits, so a handler for one must
+        not make ``main=True`` calls.
         """
         if isinstance(interfaces, str):
             interfaces = [interfaces]
@@ -470,6 +476,9 @@ class Android:
             return {"$cls": value.name}
         if isinstance(value, Member):
             return self._to_wire(value.value)
+        if isinstance(value, float) and not math.isfinite(value):
+            # json.dumps would write a bare NaN, which is not JSON.
+            return {"$float": "NaN" if math.isnan(value) else ("Infinity" if value > 0 else "-Infinity")}
         if isinstance(value, (bytes, bytearray)):
             return {"$b64": base64.b64encode(bytes(value)).decode("ascii")}
         if isinstance(value, dict):
@@ -486,6 +495,8 @@ class Android:
                 )
             if "$b64" in value:
                 return base64.b64decode(value["$b64"])
+            if "$float" in value:
+                return float(value["$float"])
             if "$cls" in value:
                 return JavaClassRef(value["$cls"])
             return {key: self._from_wire(item) for key, item in value.items()}
@@ -515,7 +526,14 @@ class Android:
     def _dispatch(self, message: dict) -> None:
         op = message.get("op")
         if op == "event":
-            self._inbox.put(message)
+            if message.get("needs_reply") and message.get("sub") in self._proxy_handlers:
+                # Not queued behind other handlers: the phone is blocked waiting, and a
+                # nested callback from inside a handler must not wait on the outer one.
+                threading.Thread(
+                    target=self._run_handler, args=(message,), name="mmm-proxy", daemon=True
+                ).start()
+            else:
+                self._inbox.put(message)
             return
         if op == "error" and message.get("type") == "unauthorized":
             self._rejected = True
@@ -547,10 +565,13 @@ class Android:
             message = inbox.get()
             if message is None:
                 return
-            try:
-                self._on_event(message)
-            except Exception as error:  # nothing here may stop later events
-                self._log_handler_error(str(message.get("sub", "")), error)
+            self._run_handler(message)
+
+    def _run_handler(self, message: dict) -> None:
+        try:
+            self._on_event(message)
+        except Exception as error:  # nothing here may stop later events
+            self._log_handler_error(str(message.get("sub", "")), error)
 
     def _on_event(self, message: dict) -> None:
         sub = message.get("sub", "")
@@ -607,7 +628,10 @@ class Android:
                 return
             self._socket = None
             self._connected.clear()
-            # Handles belong to a session, so none of them survive this.
+            # Handles belong to a session, so none of them survive this. Moving the
+            # generation on now, not at the next connect, also stops objects collected
+            # in between from queueing their old handles for the new session.
+            self._generation += 1
             self._context = None
             self._releases.clear()
         self._fail_pending(NotConnected("connection lost"))

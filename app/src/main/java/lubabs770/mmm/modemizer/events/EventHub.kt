@@ -66,8 +66,9 @@ class EventHub(
     private val recentEvents = ArrayDeque<Long>()
     private val file = File(appContext.filesDir, "subscriptions.json")
 
-    @Volatile
+    private val persistLock = Any()
     private var lastPersist = 0L
+    private var trailingScheduled = false
 
     private val deliveryHandler: Handler by lazy {
         Handler(HandlerThread("mmm-events").apply { start() }.looper)
@@ -81,17 +82,22 @@ class EventHub(
 
     // ------------------------------------------------------------ subscribe
 
-    /** Registers or re-attaches a subscription and returns any backlog to replay. */
+    /**
+     * Registers or re-registers a subscription.
+     *
+     * A durable one is left detached: its live events keep going to the backlog until
+     * the caller has replayed it through [drainOrAttach], so a new event can never
+     * reach the client ahead of an older buffered one.
+     */
     fun subscribe(
         target: EventTarget,
         tokenId: String,
         name: String,
         actions: List<String>,
         durable: Boolean,
-    ): List<Backlog.Entry> {
+    ) {
         require(name.isNotBlank()) { "subscription needs a name" }
         require(actions.isNotEmpty()) { "subscription needs at least one action" }
-        val replay: List<Backlog.Entry>
         synchronized(lock) {
             val key = key(tokenId, name)
             var sub = subs[key]
@@ -110,8 +116,8 @@ class EventHub(
                 sub.actions = actions
                 register(sub)
             }
-            sub.target = target
-            replay = sub.backlog?.drain() ?: emptyList()
+            // Non-durable subscriptions have no backlog, so they go live at once.
+            sub.target = if (durable) null else target
         }
         audit.log(
             AuditLog.Kind.SUBSCRIBE,
@@ -120,7 +126,22 @@ class EventHub(
         )
         persist(force = true)
         publish()
-        return replay
+    }
+
+    /**
+     * The next batch of backlog to replay, or — once the backlog is empty — attaches
+     * [target] for live delivery and returns nothing. Both happen under the lock that
+     * [deliver] buffers under, so no event can fall between the two.
+     */
+    fun drainOrAttach(target: EventTarget, tokenId: String, name: String): List<Backlog.Entry> {
+        val batch = synchronized(lock) {
+            val sub = subs[key(tokenId, name)] ?: return emptyList()
+            val batch = sub.backlog?.drain().orEmpty()
+            if (batch.isEmpty()) sub.target = target
+            batch
+        }
+        if (batch.isEmpty()) publish() else persist(force = true)
+        return batch
     }
 
     fun unsubscribe(tokenId: String, name: String): Boolean {
@@ -205,6 +226,8 @@ class EventHub(
                         val e = entries.optJSONObject(idx) ?: return@mapNotNull null
                         Backlog.Entry(e.optLong("eventId"), e.optLong("ts"), e.optString("json"))
                     }
+                    // New events must sort after these, even if the clock went back.
+                    restored.maxOfOrNull { it.eventId }?.let(Ids::eventsAbove)
                     sub.backlog?.restore(restored)
                 }
                 register(sub)
@@ -263,15 +286,18 @@ class EventHub(
         }
         val eventId = Ids.nextEvent()
         val ts = System.currentTimeMillis()
+        val entry = Backlog.Entry(eventId, ts, payload.toString())
         val target = synchronized(lock) {
             sub.delivered++
-            sub.target
+            val live = sub.target?.takeIf { it.alive }
+            // Buffered under the lock, so drainOrAttach either sees this entry or has
+            // already attached a session that the next branch delivers to.
+            if (live == null) sub.backlog?.add(entry)
+            live
         }
-        if (target != null && target.alive) {
+        if (target != null) {
             runCatching { target.emit(sub.name, eventId, ts, payload) }
-                .onFailure { sub.backlog?.add(Backlog.Entry(eventId, ts, payload.toString())) }
-        } else {
-            sub.backlog?.add(Backlog.Entry(eventId, ts, payload.toString()))
+                .onFailure { sub.backlog?.add(entry) }
         }
         recordRate(ts)
         persist(force = false)
@@ -304,11 +330,31 @@ class EventHub(
         }
     }
 
-    /** Durable subscriptions and their backlogs, written at most every few seconds. */
+    /**
+     * Durable subscriptions and their backlogs, written at most every few seconds.
+     *
+     * A throttled call schedules a trailing save, so the last event of a burst is on
+     * disk within [PERSIST_MS] even if nothing else happens — Android may kill the
+     * process without warning. Snapshot and write share [persistLock], so a slower
+     * writer can never put an older snapshot over a newer one.
+     */
     private fun persist(force: Boolean) {
-        val now = System.currentTimeMillis()
-        if (!force && now - lastPersist < PERSIST_MS) return
-        lastPersist = now
+        synchronized(persistLock) {
+            val now = System.currentTimeMillis()
+            if (!force && now - lastPersist < PERSIST_MS) {
+                if (!trailingScheduled) {
+                    trailingScheduled = true
+                    deliveryHandler.postDelayed({ persist(force = true) }, PERSIST_MS)
+                }
+                return
+            }
+            lastPersist = now
+            trailingScheduled = false
+            writeSnapshot()
+        }
+    }
+
+    private fun writeSnapshot() {
         val arr = JSONArray()
         synchronized(lock) {
             subs.values.filter { it.durable }.forEach { sub ->

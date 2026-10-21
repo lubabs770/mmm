@@ -6,6 +6,7 @@ writes one; the library reads it.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -57,21 +58,21 @@ class Profile:
         return self.port if self.transport == "local" else self.local_port
 
     def to_toml(self) -> str:
-        lines = [f"[profiles.{self.name}]", f'transport = "{self.transport}"']
+        lines = [f"[profiles.{_quote_key(self.name)}]", f"transport = {_quote(self.transport)}"]
         if self.token:
-            lines.append(f'token = "{self.token}"')
-        lines.append(f'host = "{self.host}"')
+            lines.append(f"token = {_quote(self.token)}")
+        lines.append(f"host = {_quote(self.host)}")
         lines.append(f"port = {self.port}")
         if self.transport != "local":
             lines.append(f"local_port = {self.local_port}")
         if self.ssh_host:
-            lines.append(f'ssh_host = "{self.ssh_host}"')
+            lines.append(f"ssh_host = {_quote(self.ssh_host)}")
         if self.ssh_port:
             lines.append(f"ssh_port = {self.ssh_port}")
         if self.ssh_user:
-            lines.append(f'ssh_user = "{self.ssh_user}"')
+            lines.append(f"ssh_user = {_quote(self.ssh_user)}")
         if self.adb_serial:
-            lines.append(f'adb_serial = "{self.adb_serial}"')
+            lines.append(f"adb_serial = {_quote(self.adb_serial)}")
         return "\n".join(lines) + "\n"
 
 
@@ -94,10 +95,23 @@ class Config:
         )
 
     def to_toml(self) -> str:
-        parts = [f'default = "{self.default}"\n']
+        parts = [f"default = {_quote(self.default)}\n"]
         for name in sorted(self.profiles):
             parts.append(self.profiles[name].to_toml())
         return "\n".join(parts)
+
+
+def _quote(value: str) -> str:
+    """A TOML basic string. JSON's escapes are a subset of TOML's, as long as
+    non-ASCII stays literal (TOML has no surrogate-pair escapes)."""
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+_BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _quote_key(name: str) -> str:
+    return name if _BARE_KEY.match(name) else _quote(name)
 
 
 def load(path: Path | None = None) -> Config:
@@ -183,7 +197,7 @@ def _mini_toml(text: str) -> dict:
         if matched_table:
             table = root
             for part in matched_table.group(1).split("."):
-                table = table.setdefault(part.strip(), {})
+                table = table.setdefault(part.strip().strip("\""), {})
             continue
         matched = _KEY_VALUE.match(line)
         if not matched:
@@ -191,8 +205,14 @@ def _mini_toml(text: str) -> dict:
         key, raw = matched.group(1), matched.group(2)
         if raw.startswith("#"):
             continue
+        if raw.startswith('"'):
+            # A basic string, escapes and all; stop at its closing quote, so a
+            # " #" inside the value is not taken for a comment.
+            value, _ = json.JSONDecoder().raw_decode(raw)
+            table[key] = value
+            continue
         raw = raw.split(" #")[0].strip()
-        if raw.startswith(('"', "'")):
+        if raw.startswith("'"):
             table[key] = raw[1:-1]
         elif raw in ("true", "false"):
             table[key] = raw == "true"

@@ -24,12 +24,22 @@ object Root {
             val process = ProcessBuilder("su", "-c", command)
                 .redirectErrorStream(true)
                 .start()
-            val output = process.inputStream.bufferedReader().use { it.readText() }
+            // Read on a thread of its own: readText() only returns once su exits, so
+            // reading here first would make the timeout below unreachable.
+            var output = ""
+            val reader = Thread {
+                output = runCatching { process.inputStream.bufferedReader().use { it.readText() } }
+                    .getOrDefault("")
+            }.apply {
+                isDaemon = true
+                start()
+            }
             val finished = waitFor(process, timeoutMs)
             if (!finished) {
                 process.destroy()
                 Result(-1, "timed out: $command")
             } else {
+                reader.join(1_000)
                 Result(process.exitValue(), output.trim())
             }
         } catch (e: Exception) {

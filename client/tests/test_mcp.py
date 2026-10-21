@@ -164,3 +164,42 @@ def test_serve_reads_ndjson_from_stdin_and_writes_replies():
             sink.write(json.dumps(response) + "\n")
     replies = [json.loads(line) for line in sink.getvalue().splitlines()]
     assert [reply["id"] for reply in replies] == [1, 2]
+
+
+class _FakeAndroid:
+    closed = False
+
+    def __init__(self, fail_first: bool) -> None:
+        self.fail_first = fail_first
+        self.subscribes = 0
+
+    def wait_connected(self, timeout):
+        return True
+
+    def subscribe(self, actions, name=None, durable=False, handler=None):
+        self.subscribes += 1
+        if self.fail_first and self.subscribes == 1:
+            raise RuntimeError("token may not subscribe")
+        return name
+
+
+def test_a_failed_subscription_is_retried_rather_than_waited_on_forever():
+    bridge = mcp.Bridge()
+    bridge._android = _FakeAndroid(fail_first=True)
+    try:
+        bridge.ensure_subscription("sms", None)
+    except RuntimeError:
+        pass
+    bridge.ensure_subscription("sms", None)
+    assert bridge._android.subscribes == 2
+
+
+def test_a_new_connection_object_subscribes_again():
+    bridge = mcp.Bridge()
+    bridge._android = _FakeAndroid(fail_first=False)
+    bridge.ensure_subscription("sms", None)
+    bridge.ensure_subscription("sms", None)
+    assert bridge._android.subscribes == 1
+    bridge._android = _FakeAndroid(fail_first=False)
+    bridge.ensure_subscription("sms", None)
+    assert bridge._android.subscribes == 1

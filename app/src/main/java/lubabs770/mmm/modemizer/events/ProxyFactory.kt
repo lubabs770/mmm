@@ -20,6 +20,10 @@ import org.json.JSONObject
  *
  * Proxy events are live-only: they carry handles belonging to this session and a
  * reply has nowhere to go once the client is gone, so they are never buffered.
+ *
+ * A callback the framework makes on the main thread blocks it while waiting for the
+ * reply. A `main: true` call made from the client's handler for it then cannot run
+ * until the timeout returns the default — so such handlers must not use `main`.
  */
 object ProxyFactory {
 

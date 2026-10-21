@@ -184,7 +184,9 @@ class Session(
             "release", "reply", "unsubscribe", "ping" -> complete(id, request, op, current)
             else -> {
                 val onMain = request.optBoolean("main", false)
-                workers.launch(if (onMain) Dispatchers.Main else Dispatchers.Default) {
+                // IO, not Default: the scope's dispatcher would be replaced by whatever is
+                // passed here, and blocking calls must not sit on the few CPU threads.
+                workers.launch(if (onMain) Dispatchers.Main else Dispatchers.IO) {
                     complete(id, request, op, current)
                 }
             }
@@ -298,22 +300,31 @@ class Session(
                 }
             }
             val durable = request.optBoolean("durable", false)
-            val replay = events.subscribe(this, caller.id, name, actions, durable)
-            replay.forEachIndexed { index, entry ->
-                val payload = runCatching { JSONObject(entry.json) }.getOrNull() ?: JSONObject()
-                try {
-                    emit(name, entry.eventId, entry.ts, payload)
-                } catch (e: IOException) {
-                    // The client went away mid-replay: keep what it did not get.
-                    events.requeue(caller.id, name, replay.drop(index))
-                    throw e
+            events.subscribe(this, caller.id, name, actions, durable)
+            // Live events wait in the backlog until it has been replayed, so nothing
+            // newer can overtake something older. Drain until the backlog is empty;
+            // only then does the hub attach this session for live delivery.
+            var replayed = 0
+            while (true) {
+                val batch = events.drainOrAttach(this, caller.id, name)
+                if (batch.isEmpty()) break
+                batch.forEachIndexed { index, entry ->
+                    val payload = runCatching { JSONObject(entry.json) }.getOrNull() ?: JSONObject()
+                    try {
+                        emit(name, entry.eventId, entry.ts, payload)
+                    } catch (e: IOException) {
+                        // The client went away mid-replay: keep what it did not get.
+                        events.requeue(caller.id, name, batch.drop(index))
+                        throw e
+                    }
                 }
+                replayed += batch.size
             }
             Prepared(
                 JSONObject()
                     .put("subscribed", name)
                     .put("durable", durable)
-                    .put("replayed", replay.size)
+                    .put("replayed", replayed)
             )
         }
 
@@ -427,10 +438,21 @@ class Session(
 
     private fun sendResult(id: Any?, value: Any?, request: JSONObject?) {
         val expand = request != null && wantsExpand(request)
-        val json = when {
-            value is Prepared -> value.json
-            expand -> Marshal.expand(value, this)
-            else -> Marshal.toJson(value, this)
+        // If marshalling fails halfway, free the handles it already handed out: the
+        // client never sees them, so it could never release them itself.
+        val allocated = ArrayList<Long>()
+        val sink = object : HandleSink {
+            override fun handle(value: Any): Long = handles.put(value).also { allocated += it }
+        }
+        val json = try {
+            when {
+                value is Prepared -> value.json
+                expand -> Marshal.expand(value, sink)
+                else -> Marshal.toJson(value, sink)
+            }
+        } catch (t: Throwable) {
+            allocated.forEach { handles.release(it) }
+            throw t
         }
         send(JSONObject().put("op", "result").put("id", id ?: JSONObject.NULL).put("value", json))
     }
