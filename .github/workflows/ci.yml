@@ -34,15 +34,8 @@ jobs:
       - name: debug apk
         run: gradle assembleDebug --no-daemon
 
-      - name: no native libraries
-        run: |
-          # The app is pure Kotlin, so one universal APK covers every CPU type.
-          # A stray .so would silently break that promise.
-          apk=$(find app/build/outputs/apk/debug -name '*.apk' | head -1)
-          if unzip -l "$apk" | grep -q 'lib/.*\.so'; then
-            echo "native library found in $apk"; unzip -l "$apk" | grep 'lib/'; exit 1
-          fi
-          echo "no native libraries in $apk"
+      - name: the apk is universal
+        run: tools/check_universal_apk.sh "$(find app/build/outputs/apk/debug -name '*.apk' | head -1)"
 
       - uses: actions/upload-artifact@v4
         if: always()

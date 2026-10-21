@@ -221,7 +221,8 @@ mmm/
 **`ci.yml`**: runs on every push and PR. Runs the Kotlin unit tests, Android lint and the Python tests, then builds a debug APK and uploads it as an artifact.
 
 **`release.yml`**: runs on a `v*` tag.
-1. Build a **universal APK** that runs on every Android CPU type (arm64-v8a, armeabi-v7a, x86, x86_64). The app is pure Kotlin with no native code, so one APK covers them all; a CI check fails the build if a native `.so` ever appears. Signed with the key from GitHub secrets.
+1. Build a **universal APK** that runs on every Android CPU type (arm64-v8a, armeabi-v7a, x86, x86_64). The app is pure Kotlin with no native code, so one APK covers them all; a CI check fails the build if a native `.so` ever appears.
+   *As built:* Compose pulls in `androidx.graphics.path`, which ships a `.so` for all four ABIs, so "no `.so` at all" was the wrong test. `tools/check_universal_apk.sh` asserts the invariant that was meant instead: if native libraries are present, every ABI must be. Signed with the key from GitHub secrets.
 2. Build the Magisk module zip from that APK plus the generated privapp XML.
 3. Build the Python client as a wheel plus a single-file `mmm.pyz` (`python mmm.pyz …`). It's plain Python, so the same file works on Termux, Linux, macOS and Windows.
 4. Generate `SHA256SUMS` and publish a GitHub Release with auto-generated notes.

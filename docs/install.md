@@ -13,9 +13,10 @@ adb install -r mmm-0.1.0.apk
 # or copy it to the phone and tap it
 ```
 
-Release APKs are universal — one file for arm64-v8a, armeabi-v7a, x86 and x86_64,
-because the app is pure Kotlin with no native code. Every build is checked for stray
-`.so` files so that stays true.
+Release APKs are universal — one file for arm64-v8a, armeabi-v7a, x86 and x86_64.
+MMM writes no native code itself; the AndroidX libraries it uses ship every ABI, and
+every build checks that all four are still present, so one APK keeps covering every
+device.
 
 Then open MMM:
 

@@ -84,9 +84,7 @@ jobs:
         run: |
           mkdir -p dist
           apk=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
-          if unzip -l "$apk" | grep -q 'lib/.*\.so'; then
-            echo "native library found: one APK can no longer cover every CPU type"; exit 1
-          fi
+          tools/check_universal_apk.sh "$apk"
           cp "$apk" "dist/mmm-${{ steps.version.outputs.name }}.apk"
 
       - name: build the magisk module

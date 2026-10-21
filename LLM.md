@@ -55,8 +55,10 @@ Breaking one of these is a bug even if everything compiles.
    hand-edited allowlist that falls behind the manifest can stop a phone booting.
 8. **The Python client has no dependencies.** CI fails if the wheel grows a
    `Requires-Dist`. It has to install on Termux.
-9. **No native code.** One universal APK covers every CPU type, and CI fails if a
-   `.so` appears.
+9. **One universal APK.** MMM writes no native code, but Compose pulls in
+   `androidx.graphics.path`, which ships a `.so` for all four ABIs — so the check is
+   `tools/check_universal_apk.sh`: if any native library is present, every ABI must
+   be. An ABI split or an `abiFilters` line would break that.
 10. **minSdk is 25.** Anything newer needs a `Build.VERSION.SDK_INT` check —
     `java.util.Base64` (API 26), `Method.getParameterCount` (26),
     `Process.waitFor(timeout)` (26) and typed `startForeground` (29/34) are the ones
