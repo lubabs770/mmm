@@ -74,6 +74,14 @@ privileged permission it is not allowlisted for **can stop the phone from bootin
 A hand-written file that falls behind the manifest is a bricked boot; a generated one
 cannot fall behind.
 
+## Device Owner
+
+MMM ships a `DeviceAdminReceiver` so it can be made Device Owner
+(`adb shell dpm set-device-owner lubabs770.mmm.modemizer/.AdminReceiver`). Doing so
+hands every **full-scope** token the whole `DevicePolicyManager` API, including
+`wipeData`, `lockNow` and silent app installs. Only pair full-scope tokens you
+would trust with a factory reset; scoped tokens cannot reach `DevicePolicyManager`.
+
 ## What is recorded
 
 The Activity screen keeps a rolling log on the device — connects, authentication

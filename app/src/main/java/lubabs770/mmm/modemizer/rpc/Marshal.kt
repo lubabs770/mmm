@@ -27,6 +27,8 @@ object Marshal {
     const val KEY_CLASS = "\$cls"
     const val KEY_OPAQUE = "\$opaque"
     const val KEY_POJO = "\$pojo"
+    /** NaN and ±Infinity, which JSON has no numbers for. */
+    const val KEY_FLOAT = "\$float"
 
     // --------------------------------------------------------------- outbound
 
@@ -37,7 +39,9 @@ object Marshal {
             is String -> value
             is Char -> value.toString()
             is Int, is Long, is Short, is Byte -> (value as Number).toLong()
-            is Float, is Double -> (value as Number).toDouble()
+            is Float, is Double -> (value as Number).toDouble().let { d ->
+                if (d.isFinite()) d else JSONObject().put(KEY_FLOAT, d.toString())
+            }
             is ByteArray -> JSONObject().put(KEY_B64, B64.encode(value))
             is Collection<*> -> JSONArray().also { arr -> value.forEach { arr.put(toJson(it, sink)) } }
             is Map<*, *> -> JSONObject().also { obj ->
@@ -78,6 +82,7 @@ object Marshal {
         is JSONObject -> when {
             json.has(KEY_HANDLE) -> resolve(json.getLong(KEY_HANDLE))
             json.has(KEY_B64) -> B64.decode(json.getString(KEY_B64))
+            json.has(KEY_FLOAT) -> json.getString(KEY_FLOAT).toDouble()
             // resolveClass loads without running static initialisers.
             json.has(KEY_CLASS) -> RpcEngine.resolveClass(json.getString(KEY_CLASS))
             else -> LinkedHashMap<String, Any?>().also { map ->

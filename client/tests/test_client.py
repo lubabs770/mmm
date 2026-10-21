@@ -356,3 +356,56 @@ def test_a_rejected_token_does_not_keep_retrying():
             Android(profile_for(server, token="revoked"), reconnect=True, timeout=5)
         time.sleep(1.5)
         assert server.connections == 1
+
+
+def test_objects_collected_while_disconnected_are_not_released_on_the_next_session():
+    with FakeServer() as server:
+        android = connect(server)
+        try:
+            old = android.new("java.lang.Object")
+            server.drop_connection()
+            assert wait_until(lambda: not android.connected)
+            # Garbage collection between the drop and the reconnect: these belong to
+            # the dead session and must never be sent to the new one.
+            for _ in range(40):
+                old.release()
+            android.connect()
+            android.ping()
+            assert all(old.handle not in r["handles"] for r in server.sent("release"))
+        finally:
+            android.close()
+
+
+def test_non_finite_floats_cross_both_ways():
+    import math
+
+    def handler(server, request):
+        if request.get("op") == "call":
+            return result(request, [{"$float": "NaN"}, {"$float": "-Infinity"}, 1.5])
+        return default_handler(server, request)
+
+    with FakeServer(handler) as server, connect(server) as android:
+        value = android.call("x.Y", "z", float("inf"), float("nan"))
+        assert math.isnan(value[0]) and value[1] == float("-inf") and value[2] == 1.5
+        assert server.sent("call")[-1]["args"] == [{"$float": "Infinity"}, {"$float": "NaN"}]
+
+
+def test_a_proxy_reply_does_not_wait_behind_another_proxy_handler():
+    second_ran = threading.Event()
+    with FakeServer() as server, connect(server) as android:
+
+        def handler(method, args):
+            if method == "outer":
+                # A nested callback fired while this one is still running: it has to
+                # be served, or both wait out the phone's reply timeout.
+                server.event("proxy#1", {"method": "inner", "args": []}, event_id=2, needs_reply=True)
+                assert second_ran.wait(3)
+                return "outer-done"
+            second_ran.set()
+            return "inner-done"
+
+        android.proxy("java.lang.Runnable", handler)
+        server.event("proxy#1", {"method": "outer", "args": []}, event_id=1, needs_reply=True)
+        assert wait_until(lambda: len(server.sent("reply")) == 2, 5)
+        replies = {r["event_id"]: r["value"] for r in server.sent("reply")}
+        assert replies == {1: "outer-done", 2: "inner-done"}

@@ -151,4 +151,17 @@ class MarshalTest {
     fun `json null decodes to null`() {
         assertNull(back(JSONObject.NULL))
     }
+
+    @Test
+    fun `non-finite doubles cross as markers instead of breaking the reply`() {
+        val nan = Marshal.toJson(Double.NaN, table) as JSONObject
+        assertEquals("NaN", nan.getString(Marshal.KEY_FLOAT))
+        val inf = Marshal.toJson(Float.NEGATIVE_INFINITY, table) as JSONObject
+        assertEquals("-Infinity", inf.getString(Marshal.KEY_FLOAT))
+        // Inside an array too, where JSONArray.put would otherwise throw.
+        JSONArray().put(Marshal.toJson(doubleArrayOf(1.0, Double.POSITIVE_INFINITY), table)).toString()
+        assertTrue((back(nan) as Double).isNaN())
+        assertEquals(Double.NEGATIVE_INFINITY, back(inf))
+        assertEquals(1.5, Marshal.toJson(1.5, table))
+    }
 }

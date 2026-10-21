@@ -45,6 +45,9 @@ class Bridge:
         self._android: Android | None = None
         self._lock = threading.Lock()
         self._buffers: dict[str, list[Any]] = {}
+        # Which connection object the buffered subscriptions were registered on; a
+        # fresh Android() carries none of them, so they have to be made again.
+        self._subscribed_on: Android | None = None
         self._arrived = threading.Condition()
 
     @property
@@ -74,15 +77,28 @@ class Bridge:
                 f"unknown subscription {name!r}; pass actions, or use one of "
                 f"{', '.join(sorted(KNOWN_SUBSCRIPTIONS))}"
             )
+        if self._subscribed_on is not android:
+            self._subscribed_on = android
+            with self._arrived:
+                self._buffers.clear()
         if name not in self._buffers:
-            self._buffers[name] = []
+            # The buffer has to exist before subscribing, because the backlog replay
+            # calls collect() before subscribe() returns.
+            with self._arrived:
+                self._buffers[name] = []
 
             def collect(payload: Any, _name: str = name) -> None:
                 with self._arrived:
-                    self._buffers[_name].append(payload)
+                    self._buffers.setdefault(_name, []).append(payload)
                     self._arrived.notify_all()
 
-            android.subscribe(wanted, name=name, durable=True, handler=collect)
+            try:
+                android.subscribe(wanted, name=name, durable=True, handler=collect)
+            except BaseException:
+                # Otherwise every later wait would skip subscribing and time out empty.
+                with self._arrived:
+                    self._buffers.pop(name, None)
+                raise
         return wanted
 
     def wait_for_events(self, name: str, timeout: float) -> list[Any]:

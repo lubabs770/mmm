@@ -45,6 +45,9 @@ class HandleTable(private val cap: Int = DEFAULT_CAP) {
     companion object {
         const val DEFAULT_CAP = 50_000
 
-        private val NEXT = AtomicLong(1)
+        // Seeded from the clock, not 1: the service process is restarted by Android
+        // all the time, and a client still holding handles from before that must not
+        // find them naming objects of its new session.
+        private val NEXT = AtomicLong(System.currentTimeMillis() * 1000)
     }
 }

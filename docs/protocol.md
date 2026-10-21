@@ -98,6 +98,7 @@ thread, so they keep their order relative to each other.
 | `{"k": …}` | `Map` |
 | `{"$h": 42, "cls": "…"}` | the object that handle refers to |
 | `{"$cls": "java.lang.String"}` | a `Class` |
+| `{"$float": "NaN"}` | a `double` JSON has no number for: `NaN`, `Infinity`, `-Infinity` |
 
 Returned values follow the same table. Integers arrive as JSON numbers (`long`
 width); `float` and `double` as JSON doubles; `char` as a one-character string.

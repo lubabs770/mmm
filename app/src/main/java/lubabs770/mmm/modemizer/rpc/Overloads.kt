@@ -83,8 +83,17 @@ object Overloads {
         return pick(fitting, args, { it.parameterTypes }, { describe(it) })
     }
 
-    /** Every method reachable on [cls], including inherited and package-private ones. */
-    private fun allMethods(cls: Class<*>): List<Method> {
+    /**
+     * Every method reachable on [cls], including inherited and package-private ones.
+     *
+     * Cached per class: walking the hierarchy and forcing accessibility on every call
+     * is slow, and on Android 9+ each pass logs hidden-API warnings.
+     */
+    private fun allMethods(cls: Class<*>): List<Method> = methodCache.getOrPut(cls) { collectMethods(cls) }
+
+    private val methodCache = java.util.concurrent.ConcurrentHashMap<Class<*>, List<Method>>()
+
+    private fun collectMethods(cls: Class<*>): List<Method> {
         val out = LinkedHashMap<String, Method>()
         fun add(m: Method) {
             val key = m.name + "(" + typeNames(m.parameterTypes).joinToString(",") + ")"

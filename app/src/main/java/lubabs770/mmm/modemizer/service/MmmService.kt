@@ -49,7 +49,7 @@ class MmmService : Service() {
                     if (clients.size == 1) "" else "s"
             }
         }
-            .onEach { startForegroundNotification(getString(R.string.app_name), it) }
+            .onEach { updateNotification(getString(R.string.app_name), it) }
             .launchIn(scope)
 
         scope.launch { whitelistFromBatteryOptimisation() }
@@ -98,7 +98,23 @@ class MmmService : Service() {
             .createNotificationChannel(channel)
     }
 
+    /** After the first startForeground, the notification is just re-posted. */
+    private fun updateNotification(title: String, text: String) {
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(NOTIFICATION_ID, buildNotification(title, text))
+    }
+
     private fun startForegroundNotification(title: String, text: String) {
+        val notification = buildNotification(title, text)
+        // specialUse only exists from API 34; earlier releases take the untyped call.
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun buildNotification(title: String, text: String): Notification {
         val open = PendingIntent.getActivity(
             this,
             0,
@@ -117,7 +133,7 @@ class MmmService : Service() {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
         }
-        val notification = builder
+        return builder
             .setContentTitle(title)
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
@@ -127,13 +143,6 @@ class MmmService : Service() {
                 Notification.Action.Builder(null, "Stop", stop).build()
             )
             .build()
-
-        // specialUse only exists from API 34; earlier releases take the untyped call.
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
     }
 
     private fun pendingIntentImmutableFlag(): Int =
