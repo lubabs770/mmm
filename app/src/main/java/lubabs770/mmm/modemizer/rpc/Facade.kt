@@ -1,5 +1,6 @@
 package lubabs770.mmm.modemizer.rpc
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
@@ -9,6 +10,7 @@ import android.provider.ContactsContract
 import android.provider.Telephony
 import android.telephony.SmsManager
 import android.telephony.TelephonyManager
+import lubabs770.mmm.modemizer.service.Privileged
 
 /**
  * The handful of operations a *scoped* token is expected to need.
@@ -105,12 +107,20 @@ object Facade {
         if (tm != null) {
             out["networkOperator"] = runCatching { tm.networkOperatorName }.getOrNull()
             out["simState"] = runCatching { tm.simState }.getOrNull()
-            out["dataEnabled"] = runCatching {
-                if (Build.VERSION.SDK_INT >= 26) tm.isDataEnabled else null
-            }.getOrNull()
-            out["signalLevel"] = runCatching {
-                if (Build.VERSION.SDK_INT >= 28) tm.signalStrength?.level else null
-            }.getOrNull()
+            // READ_PHONE_STATE may simply not be granted: report null rather than
+            // leaning on the SecurityException.
+            val phoneState = Privileged.holds(context, Manifest.permission.READ_PHONE_STATE)
+            out["phoneStatePermission"] = phoneState
+            out["dataEnabled"] = if (phoneState && Build.VERSION.SDK_INT >= 26) {
+                runCatching { tm.isDataEnabled }.getOrNull()
+            } else {
+                null
+            }
+            out["signalLevel"] = if (phoneState && Build.VERSION.SDK_INT >= 28) {
+                runCatching { tm.signalStrength?.level }.getOrNull()
+            } else {
+                null
+            }
         }
 
         val battery = context.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager
