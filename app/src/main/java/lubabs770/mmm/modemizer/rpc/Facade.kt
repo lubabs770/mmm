@@ -1,16 +1,18 @@
 package lubabs770.mmm.modemizer.rpc
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.CallLog
 import android.provider.ContactsContract
 import android.provider.Telephony
 import android.telephony.SmsManager
 import android.telephony.TelephonyManager
-import lubabs770.mmm.modemizer.service.Privileged
+import androidx.core.content.ContextCompat
 
 /**
  * The handful of operations a *scoped* token is expected to need.
@@ -96,6 +98,9 @@ object Facade {
 
     /** Signal, battery, network and SIM state in one call. */
     @JvmStatic
+    // READ_PHONE_STATE is checked right here; lint cannot follow that through the
+    // runCatching lambdas the calls sit in.
+    @SuppressLint("MissingPermission")
     fun deviceStatus(context: Context): Map<String, Any?> {
         val out = LinkedHashMap<String, Any?>()
         out["model"] = Build.MODEL
@@ -109,14 +114,17 @@ object Facade {
             out["simState"] = runCatching { tm.simState }.getOrNull()
             // READ_PHONE_STATE may simply not be granted: report null rather than
             // leaning on the SecurityException.
-            val phoneState = Privileged.holds(context, Manifest.permission.READ_PHONE_STATE)
-            out["phoneStatePermission"] = phoneState
-            out["dataEnabled"] = if (phoneState && Build.VERSION.SDK_INT >= 26) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_PHONE_STATE,
+            ) == PackageManager.PERMISSION_GRANTED
+            out["phoneStatePermission"] = granted
+            out["dataEnabled"] = if (granted && Build.VERSION.SDK_INT >= 26) {
                 runCatching { tm.isDataEnabled }.getOrNull()
             } else {
                 null
             }
-            out["signalLevel"] = if (phoneState && Build.VERSION.SDK_INT >= 28) {
+            out["signalLevel"] = if (granted && Build.VERSION.SDK_INT >= 28) {
                 runCatching { tm.signalStrength?.level }.getOrNull()
             } else {
                 null
