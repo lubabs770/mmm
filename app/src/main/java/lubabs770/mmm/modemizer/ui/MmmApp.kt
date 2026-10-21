@@ -11,9 +11,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
@@ -48,7 +48,7 @@ enum class Screen(val title: String, val digit: Int, val icon: ImageVector) {
     CLIENTS("Clients", 2, Icons.Filled.Person),
     PERMISSIONS("Permissions", 3, Icons.Filled.Lock),
     SUBSCRIPTIONS("Subscriptions", 4, Icons.Filled.Notifications),
-    ACTIVITY("Activity", 5, Icons.Filled.List),
+    ACTIVITY("Activity", 5, Icons.AutoMirrored.Filled.List),
     SETTINGS("Settings", 6, Icons.Filled.Settings),
 }
 
@@ -113,7 +113,7 @@ fun MmmApp() {
                             onClick = { screen = null },
                             modifier = Modifier.focusHighlight(),
                         ) {
-                            Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     }
                 },

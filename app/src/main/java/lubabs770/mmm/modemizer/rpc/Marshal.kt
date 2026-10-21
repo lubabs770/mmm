@@ -141,7 +141,12 @@ object Marshal {
         return out
     }
 
-    /** Public no-argument getters and public fields of a plain Java object. */
+    /**
+     * Public no-argument getters and public fields of a plain Java object.
+     *
+     * Accessibility is forced first: plenty of framework classes are package-private
+     * or hidden, and reflection checks the *caller's* package, not the object's.
+     */
     fun pojoToJson(value: Any, sink: HandleSink?): JSONObject {
         val out = JSONObject()
         out.put(KEY_POJO, value.javaClass.name)
@@ -155,11 +160,13 @@ object Marshal {
                 name.startsWith("is") && name.length > 2 -> name.substring(2).decapitalize()
                 else -> null
             } ?: continue
+            if (!method.isAccessible) runCatching { method.isAccessible = true }
             val read = runCatching { method.invoke(value) }
             if (read.isSuccess) out.put(property, toJson(read.getOrNull(), sink))
         }
         for (field in value.javaClass.fields) {
             if (out.has(field.name)) continue
+            if (!field.isAccessible) runCatching { field.isAccessible = true }
             val read = runCatching { field.get(value) }
             if (read.isSuccess) out.put(field.name, toJson(read.getOrNull(), sink))
         }

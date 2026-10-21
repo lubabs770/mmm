@@ -88,8 +88,11 @@ jobs:
           # It has to install cleanly on Termux, where wheels are scarce.
           pip install build
           python -m build --wheel --outdir /tmp/wheel client
-          if unzip -p /tmp/wheel/*.whl '*.dist-info/METADATA' | grep -i '^Requires-Dist'; then
-            echo "the client must not grow dependencies"; exit 1
+          # Optional extras (pytest, under extra == "dev") are fine; a runtime
+          # dependency is not.
+          if unzip -p /tmp/wheel/*.whl '*.dist-info/METADATA' |
+               grep -i '^Requires-Dist' | grep -v 'extra =='; then
+            echo "the client must not grow runtime dependencies"; exit 1
           fi
           pip install --no-deps --force-reinstall /tmp/wheel/*.whl
           mmm --version
