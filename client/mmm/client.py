@@ -143,6 +143,9 @@ class Android:
         self._closed = False
         self._connected = threading.Event()
         self._reconnect = reconnect
+        # Set by the reader as soon as the phone rejects the token, so the hang-up
+        # that follows is not mistaken for a dropped link worth reconnecting.
+        self._rejected = False
         self._context: JavaObject | None = None
 
         if connect:
@@ -157,6 +160,7 @@ class Android:
             connection = self._transport.connect()
             self._socket = connection
             self._closed = False
+            self._rejected = False
             self._generation += 1
             self._ensure_dispatcher()
             self._reader = threading.Thread(
@@ -513,6 +517,8 @@ class Android:
         if op == "event":
             self._inbox.put(message)
             return
+        if op == "error" and message.get("type") == "unauthorized":
+            self._rejected = True
         pending = self._pending.get(message.get("id"))
         if pending is None:
             return
@@ -605,7 +611,7 @@ class Android:
             self._context = None
             self._releases.clear()
         self._fail_pending(NotConnected("connection lost"))
-        if self._closed or not self._reconnect:
+        if self._closed or self._rejected or not self._reconnect:
             return
         threading.Thread(target=self._reconnect_loop, name="mmm-reconnect", daemon=True).start()
 
