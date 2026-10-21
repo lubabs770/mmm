@@ -1,0 +1,54 @@
+site_name: MMM
+site_description: All of Android, from Python — a reflection RPC for Android phones.
+site_url: https://lubabs770.github.io/mmm/
+repo_url: https://github.com/lubabs770/mmm
+repo_name: lubabs770/mmm
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.details
+
+nav:
+  - Overview: index.md
+  - Install: install.md
+  - Pairing: pairing.md
+  - Python guide: python.md
+  - Protocol: protocol.md
+  - Recipes: recipes.md
+  - MCP: mcp.md
+  - Security model: security.md
+  - Design spec: spec.md

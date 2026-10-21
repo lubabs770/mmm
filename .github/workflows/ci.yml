@@ -1,0 +1,95 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: kotlin tests, lint, debug apk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ubuntu-latest ships the Android SDK ($ANDROID_HOME); AGP fetches what is missing.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: unit tests
+        run: gradle testDebugUnitTest --no-daemon
+
+      - name: lint
+        run: gradle lintDebug --no-daemon
+
+      - name: debug apk
+        run: gradle assembleDebug --no-daemon
+
+      - name: no native libraries
+        run: |
+          # The app is pure Kotlin, so one universal APK covers every CPU type.
+          # A stray .so would silently break that promise.
+          apk=$(find app/build/outputs/apk/debug -name '*.apk' | head -1)
+          if unzip -l "$apk" | grep -q 'lib/.*\.so'; then
+            echo "native library found in $apk"; unzip -l "$apk" | grep 'lib/'; exit 1
+          fi
+          echo "no native libraries in $apk"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mmm-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: reports
+          path: |
+            app/build/reports/**
+            app/build/test-results/**
+
+  python:
+    name: python client
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 has no tomllib, which is why config.py carries a fallback parser.
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: install the client
+        run: pip install -e "client[dev]"
+
+      - name: client tests
+        run: python -m pytest client/tests -q
+
+      - name: magisk allowlist generator tests
+        run: python -m pytest -q
+        working-directory: magisk
+
+      - name: the client stays dependency-free
+        run: |
+          # It has to install cleanly on Termux, where wheels are scarce.
+          pip install build
+          python -m build --wheel --outdir /tmp/wheel client
+          if unzip -p /tmp/wheel/*.whl '*.dist-info/METADATA' | grep -i '^Requires-Dist'; then
+            echo "the client must not grow dependencies"; exit 1
+          fi
+          pip install --no-deps --force-reinstall /tmp/wheel/*.whl
+          mmm --version

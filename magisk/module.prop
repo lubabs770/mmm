@@ -1,0 +1,6 @@
+id=mmm
+name=MMM (Magnificent Modern Modemizer)
+version=0.0.0-dev
+versionCode=1
+author=MMM contributors
+description=Installs MMM as a privileged app with its generated permission allowlist, and starts its service at boot.

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MMM</string>
+    <string name="service_channel_name">RPC server</string>
+    <string name="service_channel_desc">Shows while the MMM RPC server is listening.</string>
+</resources>
