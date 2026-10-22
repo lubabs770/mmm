@@ -71,9 +71,9 @@ mmm pair <token> --adb                         # from a computer, over USB
 ```
  Linux computer                 Phone
  ┌──────────────┐      ┌─────────────────────────────────────┐
- │ python: mmm  │─ssh─▶│ Termux sshd ─┐                      │
- │ CLI:    mmm  │ -L   │              ▼                      │
- └──────────────┘      │ 127.0.0.1:7357  ◀── Termux: mmm     │
+ │ python: mmm  │─ssh─>│ Termux sshd ─┐                      │
+ │ CLI:    mmm  │ -L   │              v                      │
+ └──────────────┘      │ 127.0.0.1:7357  <── Termux: mmm     │
    (or adb forward)    │      │                              │
                        │ MMM app (foreground service)        │
                        │  ├ RPC engine (reflection)          │
