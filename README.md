@@ -32,7 +32,21 @@ mmm call android.os.Build getRadioVersion
 mmm watch android.provider.Telephony.SMS_RECEIVED --durable sms
 mmm repl
 mmm mcp        # an MCP server, so an AI assistant can use the phone
-mmm ui         # a web UI, plus rules: a text's first word runs a command here
+mmm ui         # a web UI, plus rules: a text, a picture or a phone event runs a command here
+```
+
+The common jobs also come as plain functions in `mmm.android`, shared by the web UI,
+the MCP server and your scripts:
+
+```python
+from mmm import Android
+from mmm.android import apps, network, sms
+
+a = Android()
+sms.send(a, "+15550100199", "hello")
+sms.send_mms(a, "+15550100199", open("cat.jpg", "rb").read(), "cat.jpg", "image/jpeg", "look")
+print(network.wifi(a)["ssid"])                    # root
+apps.set_enabled(a, "com.example.bloat", False)   # root; reversible pm disable-user
 ```
 
 ## Screenshots
@@ -51,20 +65,23 @@ The web client on the computer, `mmm ui` ([more](docs/ui.md)):
 | **Phone** | **Mac** |
 | ![Phone: battery, signal, network, Android version, root, priv-app and MMM version](docs/images/ui-phone.png) | ![Mac: the daemon, the phone link, start at login, and rule runs](docs/images/ui-mac.png) |
 
+It also has Calls, Notifications, Apps, Network, Android settings and a Console page.
+Messages sends pictures as MMS, and pictures texted to the phone reach your rules.
+
 ## What is in here
 
 | | |
 |---|---|
 | `app/` | the Android app: RPC engine, event hub, tokens, and a Material 3 config UI that works with touch **and** a D-pad, so it suits keypad flip phones too |
 | `magisk/` | an optional Magisk module that installs MMM as a priv-app, with its permission allowlist generated from the manifest |
-| `client/` | the Python client: library, `mmm` CLI, and an MCP server — no dependencies, so it installs on Termux |
+| `client/` | the Python client: library (curated helpers in `mmm.android`), `mmm` CLI, MCP server, and `mmm serve` (rules and the web UI) — no dependencies, so it installs on Termux |
 | `docs/` | the documentation site, including the design spec |
 
 ## Install
 
 ```sh
 # the app: grab mmm-<version>.apk from the releases page
-adb install -r mmm-0.1.0.apk
+adb install -r -g mmm-<version>.apk   # an update restarts the service by itself
 
 # the client (released on its own, as "MMM client" on the same page)
 pip install "git+https://github.com/lubabs770/mmm#subdirectory=client"
@@ -117,8 +134,9 @@ mmm pair <token> --tailnet phone               # from a computer on your tailnet
 ## Requirements
 
 - Android 7.1 (API 25) or later.
-- Root is optional — it grants permissions without tapping and keeps the service out
-  of Doze.
+- Root is optional — it grants permissions without tapping, keeps the service out
+  of Doze, and is what the Apps, Network and Notifications pages and picture (MMS)
+  receiving run on.
 - The Magisk module is optional — it is the only way to hold `MODIFY_PHONE_STATE`
   and `READ_PRIVILEGED_PHONE_STATE` for call control.
 - Python 3.10 or later for the client.

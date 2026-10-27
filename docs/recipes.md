@@ -48,6 +48,29 @@ def on_sms(intent):
         print(message.getOriginatingAddress(), message.getMessageBody())
 ```
 
+## Pictures in and out
+
+Send one:
+
+```python
+from mmm import Android
+from mmm.android import sms
+
+with Android() as a:
+    sms.send_mms(a, "+15550100199", open("cat.jpg", "rb").read(), "cat.jpg", "image/jpeg", "look")
+```
+
+Keep it under about 1 MB; carriers drop larger messages. The Messages page in
+`mmm ui` shrinks a picture for you before sending.
+
+Receive them with `mmm serve`: an MMS runs the same rules as a text, with its caption
+as the text and the pictures saved on the computer, one path per line in
+`MMM_MEDIA`:
+
+```json
+{"trigger": "*", "command": ["sh", "-c", "for f in $MMM_MEDIA; do cp \"$f\" ~/Pictures/; done"]}
+```
+
 ## A call screener
 
 Watches call state, and with a priv-app install can act on it:
