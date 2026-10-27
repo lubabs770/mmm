@@ -43,8 +43,9 @@ a.run()
                        └─────────────────────────────────────┘
 ```
 
-The app listens on **loopback only**. A computer reaches it through an SSH tunnel or
-`adb forward`, and every connection has to present a token that was created by
+The app listens on **loopback** by default. A computer reaches it through an SSH
+tunnel, `adb forward`, or directly over Tailscale once you turn that on, and every
+connection has to present a token that was created by
 pairing in the app.
 
 ## Start here

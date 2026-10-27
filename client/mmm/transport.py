@@ -1,8 +1,9 @@
 """Getting a socket to the phone's loopback port.
 
-MMM never listens on a network interface, so reaching it from a computer means
+By default MMM listens on loopback only, so reaching it from a computer means
 tunnelling: SSH (Termux's sshd, usually) or ``adb forward``. Both carry their own
-authentication; the token is checked on top.
+authentication; the token is checked on top. With the app's tailnet setting on, a
+computer on the same Tailscale network can dial the phone directly instead.
 """
 
 from __future__ import annotations
@@ -59,6 +60,13 @@ class Transport:
 
 class LocalTransport(Transport):
     """On the phone itself, in Termux: the port is simply there."""
+
+
+class TailnetTransport(Transport):
+    """Straight to the phone's Tailscale name or address; Tailscale is the tunnel."""
+
+    def describe(self) -> str:
+        return f"tailnet {self.profile.host}:{self.profile.port}"
 
 
 class SshTransport(Transport):
@@ -149,4 +157,5 @@ def for_profile(profile: Profile) -> Transport:
         "local": LocalTransport,
         "ssh": SshTransport,
         "adb": AdbTransport,
+        "tailnet": TailnetTransport,
     }[profile.transport](profile)

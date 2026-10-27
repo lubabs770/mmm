@@ -11,7 +11,8 @@ import android.content.Context
  *
  *     a.cls("lubabs770.mmm.modemizer.settings.SettingsBridge").set(a.context, "port", 7400)
  *
- * A port change takes effect when the service restarts the listener.
+ * A port or tailnet change takes effect when the service restarts the listener
+ * (`MmmRuntime.restartListener`).
  */
 object SettingsBridge {
 
@@ -21,6 +22,7 @@ object SettingsBridge {
         return linkedMapOf(
             "port" to s.port,
             "startOnBoot" to s.startOnBoot,
+            "tailnet" to s.tailnet,
             "backlogEvents" to s.backlogEvents,
             "backlogHours" to s.backlogHours,
             "proxyReplyTimeoutMs" to s.proxyReplyTimeoutMs,

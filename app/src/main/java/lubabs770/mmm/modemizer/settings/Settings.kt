@@ -19,6 +19,8 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
 data class MmmSettings(
     val port: Int = DEFAULT_PORT,
     val startOnBoot: Boolean = true,
+    /** Also listen on the phone's Tailscale address. Off by default. */
+    val tailnet: Boolean = false,
     val backlogEvents: Int = 500,
     val backlogHours: Int = 24,
     val proxyReplyTimeoutMs: Long = 2_000,
@@ -28,6 +30,7 @@ data class MmmSettings(
     fun toJson(): JSONObject = JSONObject()
         .put("port", port)
         .put("startOnBoot", startOnBoot)
+        .put("tailnet", tailnet)
         .put("backlogEvents", backlogEvents)
         .put("backlogHours", backlogHours)
         .put("proxyReplyTimeoutMs", proxyReplyTimeoutMs)
@@ -43,6 +46,7 @@ data class MmmSettings(
             return MmmSettings(
                 port = obj.optInt("port", d.port).coerceIn(1024, 65535),
                 startOnBoot = obj.optBoolean("startOnBoot", d.startOnBoot),
+                tailnet = obj.optBoolean("tailnet", d.tailnet),
                 backlogEvents = obj.optInt("backlogEvents", d.backlogEvents).coerceIn(0, 100_000),
                 backlogHours = obj.optInt("backlogHours", d.backlogHours).coerceIn(0, 24 * 30),
                 proxyReplyTimeoutMs = obj.optLong("proxyReplyTimeoutMs", d.proxyReplyTimeoutMs)
@@ -73,6 +77,7 @@ class SettingsStore private constructor(private val file: File) {
             when (key) {
                 "port" -> s.copy(port = asInt(value, s.port).coerceIn(1024, 65535))
                 "startOnBoot" -> s.copy(startOnBoot = asBool(value, s.startOnBoot))
+                "tailnet" -> s.copy(tailnet = asBool(value, s.tailnet))
                 "backlogEvents" -> s.copy(backlogEvents = asInt(value, s.backlogEvents).coerceIn(0, 100_000))
                 "backlogHours" -> s.copy(backlogHours = asInt(value, s.backlogHours).coerceIn(0, 24 * 30))
                 "proxyReplyTimeoutMs" ->

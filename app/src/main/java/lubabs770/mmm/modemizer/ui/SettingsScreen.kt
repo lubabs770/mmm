@@ -69,6 +69,18 @@ fun SettingsScreen(primary: FocusRequester) {
             }
             portNote?.let { Hint(it) }
             SettingSwitch(
+                label = "Listen on tailnet",
+                checked = settings.tailnet,
+                onChange = {
+                    store.set("tailnet", it)
+                    MmmRuntime.restartListener(context)
+                },
+            )
+            Hint(
+                "Also listens on this phone's Tailscale address, for tailnet peers only. " +
+                    "A token is still required. Anyone on your tailnet can try one."
+            )
+            SettingSwitch(
                 label = "Start on boot",
                 checked = settings.startOnBoot,
                 onChange = { store.set("startOnBoot", it) },

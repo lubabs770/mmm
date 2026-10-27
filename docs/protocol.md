@@ -203,7 +203,9 @@ request already on its way gets an `unauthorized` error.
 
 - One handle table per session, capped (50 000 by default). Handle numbers are unique
   across sessions, so a handle from an earlier connection is simply unknown.
-- The listener binds `127.0.0.1` only, with a backlog of 8.
+- The listener binds `127.0.0.1`, plus the Tailscale address when `tailnet` is on,
+  each with a backlog of 8. `auth` and `ping` replies carry `tailnet`: that
+  `address:port`, or `null`.
 - `auth` must arrive within 10 seconds, in a line of at most 64 KiB; at most 16
   connections may be waiting to authenticate at once.
 - After that, a request line may be up to 32 MiB.

@@ -47,6 +47,7 @@ SELinux (Android's mandatory access-control layer) normally blocks one app, Term
 - Listen on **`127.0.0.1:7357`** only, never on a network interface. The port is configurable.
 - Every connection must authenticate first with a **per-client token**. Tokens are created by pairing in the UI and can be revoked.
 - Remote computers reach the port only through an SSH `-L` tunnel (for example through Termux's sshd) or `adb forward tcp:7357 tcp:7357`. Nothing is exposed to the network.
+- *Later addition:* an opt-in `tailnet` setting also binds the phone's Tailscale address, accepting only peers in 100.64.0.0/10, for a computer on the same tailnet to connect without a tunnel. Off by default.
 
 ---
 
@@ -172,7 +173,7 @@ a.run()                             # event loop; or a.events() iterator
 
 ## Security model (for the README)
 - MMM gives full control of the phone to anyone holding a valid token, by design.
-- Loopback only; remote access only through SSH or adb, which bring their own authentication.
+- Loopback only by default; remote access through SSH or adb, which bring their own authentication, or the opt-in tailnet listener, which relies on Tailscale's.
 - Release APKs are signed with a key kept in CI secrets, **never committed**. Otherwise anyone could sign an "update" that replaces a privileged app with full phone access.
 
 ---

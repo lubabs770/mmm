@@ -6,11 +6,17 @@ Everything below follows from taking that seriously.
 
 ## What protects the port
 
-- **Loopback only.** The listener binds `127.0.0.1`. Nothing on the LAN can reach
-  it; the Status screen shows exactly what it is bound to.
+- **Loopback by default.** The listener binds `127.0.0.1`. Nothing on the LAN can
+  reach it; the Status screen shows exactly what it is bound to.
 - **Remote access borrows someone else's authentication.** An SSH tunnel or
-  `adb forward` is the only way in from another machine, and both authenticate
-  before any MMM traffic exists.
+  `adb forward` is the way in from another machine, and both authenticate before
+  any MMM traffic exists.
+- **Tailnet is opt-in.** With **Settings → Listen on tailnet** on, MMM also binds the
+  phone's Tailscale address (100.64.0.0/10) and drops any connection whose source
+  is outside that range. Tailscale encrypts the link and decides which devices are
+  on your tailnet, so it takes the place of SSH. The difference is that **every
+  device on your tailnet can reach the port and try a token**, where SSH would have
+  asked for a key first. Use Tailscale ACLs to narrow that if your tailnet is shared.
 - **A token on top.** The first message on every connection must be `auth`, and a
   wrong token closes the connection and is logged.
 - **No free waiting room.** Any app on the phone can open a loopback connection, so

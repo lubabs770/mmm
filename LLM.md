@@ -45,8 +45,11 @@ Breaking one of these is a bug even if everything compiles.
    must not assume one survives a reconnect. Handle numbers come from one
    process-wide counter so a stale one is unknown rather than someone else's
    object; the Python client also tags each `JavaObject` with its connection.
-4. **The listener binds `127.0.0.1` only.** Never a network interface, never
-   `0.0.0.0`. Remote access is SSH or `adb forward`.
+4. **The listener binds `127.0.0.1`, plus the tailnet address only when the user
+   turns `tailnet` on.** Never another network interface, never `0.0.0.0`. The
+   tailnet socket refuses any peer outside 100.64.0.0/10 (`Tailnet.contains`):
+   Linux delivers packets for any local address on any interface, so binding alone
+   does not keep the LAN out. Otherwise remote access is SSH or `adb forward`.
 5. **`auth` is the first message or the connection closes.** No op is answered
    before it, and it must arrive within 10 s in a small line. Revoking a token
    closes its live sessions (`MmmRuntime.revokeClient`), and `Session` re-checks the

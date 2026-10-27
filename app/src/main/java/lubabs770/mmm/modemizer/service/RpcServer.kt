@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,11 +27,14 @@ import lubabs770.mmm.modemizer.settings.SettingsStore
 import org.json.JSONObject
 
 /**
- * The listener on 127.0.0.1.
+ * The listener on 127.0.0.1, and optionally on the phone's tailnet address.
  *
- * Loopback only, never a network interface: a remote computer reaches it through an
- * SSH tunnel or `adb forward`, both of which bring their own authentication. Every
- * connection still has to present a token.
+ * Loopback by default: a remote computer reaches it through an SSH tunnel or
+ * `adb forward`, both of which bring their own authentication. The opt-in tailnet
+ * listener leans on Tailscale's instead, binds only the Tailscale address, and drops
+ * any peer outside 100.64.0.0/10 (Linux delivers a packet for any local address on
+ * any interface, so the bind alone is not enough). Every connection still has to
+ * present a token.
  */
 class RpcServer(
     private val appContext: Context,
@@ -53,6 +57,11 @@ class RpcServer(
 
     private var serverSocket: ServerSocket? = null
     private var acceptJob: Job? = null
+    private var tailnetSocket: ServerSocket? = null
+    private var tailnetAcceptJob: Job? = null
+    private var tailnetWatchJob: Job? = null
+    @Volatile
+    private var tailnetWanted = false
 
     private val _port = MutableStateFlow<Int?>(null)
     /** The port being listened on, or null when the server is down. */
@@ -61,11 +70,15 @@ class RpcServer(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    private val _tailnet = MutableStateFlow<String?>(null)
+    /** `address:port` of the tailnet listener, or null when there is none. */
+    val tailnet: StateFlow<String?> = _tailnet.asStateFlow()
+
     private val _clients = MutableStateFlow<List<ClientInfo>>(emptyList())
     val clients: StateFlow<List<ClientInfo>> = _clients.asStateFlow()
 
-    fun start(port: Int) {
-        if (_port.value == port && acceptJob?.isActive == true) return
+    fun start(port: Int, tailnet: Boolean = false) {
+        if (_port.value == port && tailnetWanted == tailnet && acceptJob?.isActive == true) return
         stop()
         val socket = try {
             ServerSocket(port, BACKLOG, InetAddress.getByName(LOOPBACK))
@@ -78,10 +91,60 @@ class RpcServer(
         _port.value = port
         _error.value = null
         audit.log(AuditLog.Kind.SERVICE, "listening on $LOOPBACK:$port")
-        acceptJob = scope.launch { acceptLoop(socket) }
+        acceptJob = scope.launch { acceptLoop(socket, tailnetOnly = false) }
+        tailnetWanted = tailnet
+        if (tailnet) tailnetWatchJob = scope.launch { watchTailnet(port) }
     }
 
-    private suspend fun acceptLoop(socket: ServerSocket) {
+    /**
+     * Tailscale often comes up after MMM on boot, and its address can change, so the
+     * tailnet listener follows the address instead of binding once.
+     *
+     * ponytail: polls every [TAILNET_POLL_MS]; a ConnectivityManager callback if the
+     * delay ever matters.
+     */
+    private suspend fun watchTailnet(port: Int) {
+        var bound: InetAddress? = null
+        while (true) {
+            val address = Tailnet.localAddress()
+            if (address != bound) {
+                closeTailnet()
+                bound = address
+                if (address != null) bindTailnet(address, port)
+            }
+            delay(TAILNET_POLL_MS)
+        }
+    }
+
+    // Synchronized with [closeTailnet]: the watcher binds on an IO thread while
+    // [stop] may run on another, and a socket bound after stop would leak.
+    @Synchronized
+    private fun bindTailnet(address: InetAddress, port: Int) {
+        if (!tailnetWanted) return
+        val where = "${address.hostAddress}:$port"
+        val socket = try {
+            ServerSocket(port, BACKLOG, address)
+        } catch (e: Exception) {
+            audit.log(AuditLog.Kind.ERROR, "listen on $where failed: ${e.message}")
+            return
+        }
+        tailnetSocket = socket
+        _tailnet.value = where
+        audit.log(AuditLog.Kind.SERVICE, "listening on $where (tailnet)")
+        tailnetAcceptJob = scope.launch { acceptLoop(socket, tailnetOnly = true) }
+    }
+
+    @Synchronized
+    private fun closeTailnet() {
+        tailnetAcceptJob?.cancel()
+        tailnetAcceptJob = null
+        runCatching { tailnetSocket?.close() }
+        if (tailnetSocket != null) audit.log(AuditLog.Kind.SERVICE, "stopped listening on ${_tailnet.value}")
+        tailnetSocket = null
+        _tailnet.value = null
+    }
+
+    private suspend fun acceptLoop(socket: ServerSocket, tailnetOnly: Boolean) {
         while (!socket.isClosed) {
             val connection: Socket = try {
                 socket.accept()
@@ -89,9 +152,15 @@ class RpcServer(
                 if (!socket.isClosed) Log.w(TAG, "accept failed", e)
                 break
             }
+            if (tailnetOnly && !Tailnet.contains(connection.inetAddress)) {
+                // Logcat only, like the flood below: the Activity log is for real clients.
+                Log.w(TAG, "refused ${connection.inetAddress.hostAddress}: not a tailnet peer")
+                runCatching { connection.close() }
+                continue
+            }
             runCatching { connection.tcpNoDelay = true }
             if (sessions.count { !it.authenticated } >= MAX_UNAUTHENTICATED) {
-                // Anything on the phone can open a loopback connection; refuse a pile
+                // Anything on the phone (or the tailnet) can open a connection; refuse a pile
                 // of them that never authenticate. Logcat only: a flood of these must
                 // not push real entries out of the Activity log.
                 Log.w(TAG, "too many connections waiting to authenticate; refused one")
@@ -121,7 +190,11 @@ class RpcServer(
             }
             sessions.add(session)
             publishClients()
-            audit.log(AuditLog.Kind.CONNECT, "connection accepted on $LOOPBACK:${socket.localPort}")
+            audit.log(
+                AuditLog.Kind.CONNECT,
+                "connection accepted on ${socket.inetAddress.hostAddress}:${socket.localPort}" +
+                    if (tailnetOnly) " from ${connection.inetAddress.hostAddress}" else "",
+            )
             // A thread of its own, not a pooled coroutine: a session blocks on its
             // socket for its whole life and must not use up a shared pool.
             thread(name = "mmm-session-${session.sessionId}", isDaemon = true) { session.run() }
@@ -138,6 +211,10 @@ class RpcServer(
         acceptJob = null
         runCatching { serverSocket?.close() }
         serverSocket = null
+        tailnetWatchJob?.cancel()
+        tailnetWatchJob = null
+        tailnetWanted = false
+        closeTailnet()
         sessions.toList().forEach { it.close() }
         sessions.clear()
         _port.value = null
@@ -155,6 +232,7 @@ class RpcServer(
         .put("version", BuildConfig.VERSION_NAME)
         .put("protocol", PROTOCOL_VERSION)
         .put("port", _port.value ?: -1)
+        .put("tailnet", _tailnet.value ?: JSONObject.NULL)
         .put("model", Build.MODEL)
         .put("android_release", Build.VERSION.RELEASE)
         .put("sdk_int", Build.VERSION.SDK_INT)
@@ -176,5 +254,6 @@ class RpcServer(
         const val PROTOCOL_VERSION = 1
         private const val BACKLOG = 8
         private const val MAX_UNAUTHENTICATED = 16
+        private const val TAILNET_POLL_MS = 10_000L
     }
 }

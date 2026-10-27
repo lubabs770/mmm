@@ -99,3 +99,16 @@ def test_no_config_at_all_asks_for_pairing(tmp_path, monkeypatch):
 def test_unknown_keys_are_kept_rather_than_dropped():
     config = config_module.parse('[profiles.x]\ntransport = "local"\nfuture_thing = 1\n')
     assert config.profiles["x"].extra == {"future_thing": 1}
+
+
+def test_a_tailnet_profile_dials_the_phone_directly(tmp_path, monkeypatch):
+    monkeypatch.setenv("MMM_CONFIG", str(tmp_path / "config.toml"))
+    config = Config(default="phone")
+    config.profiles["phone"] = Profile(
+        name="phone", token="t", transport="tailnet", host="phone", port=7400
+    )
+    config_module.save(config)
+    profile = config_module.load().profile("phone")
+    assert profile.transport == "tailnet"
+    assert profile.host == "phone"
+    assert profile.connect_port == 7400

@@ -19,8 +19,8 @@ The dialog also offers the ready-made commands for each transport.
 
 ## Transports
 
-MMM listens on `127.0.0.1` and nothing else. How you reach that from elsewhere is up
-to the transport.
+MMM listens on `127.0.0.1`, and on the phone's Tailscale address too if you turn
+that on. How you reach it from elsewhere is up to the transport.
 
 ### `local` — on the phone
 
@@ -53,6 +53,20 @@ mmm pair <token> --adb --serial ZY227xxxxx    # with several devices attached
 ```
 
 The client runs `adb forward tcp:<local_port> tcp:7357` when it connects.
+
+### `tailnet` — over Tailscale, no tunnel
+
+Turn on **Settings → Listen on tailnet** in the app, then from any machine on the
+same tailnet:
+
+```sh
+mmm pair <token> --tailnet phone
+```
+
+`phone` is the phone's MagicDNS name or its `100.x.y.z` address. The client dials
+it directly; Tailscale is the tunnel. MMM follows the phone's Tailscale address, so
+it starts listening when Tailscale comes up (within about 10 seconds) and Status
+shows the address. See the [security model](security.md) for what this opens.
 
 ## The config file
 

@@ -409,3 +409,14 @@ def test_a_proxy_reply_does_not_wait_behind_another_proxy_handler():
         assert wait_until(lambda: len(server.sent("reply")) == 2, 5)
         replies = {r["event_id"]: r["value"] for r in server.sent("reply")}
         assert replies == {1: "outer-done", 2: "inner-done"}
+
+
+
+def test_the_tailnet_transport_dials_host_and_port_without_a_tunnel():
+    with FakeServer() as server:
+        profile = Profile(name="t", token=server.token, transport="tailnet",
+                          host="127.0.0.1", port=server.port)
+        with Android(profile, reconnect=False, timeout=5) as android:
+            assert android.connected
+            assert "tailnet" in android._transport.describe()
+        assert server.ops()[0] == "auth"

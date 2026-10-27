@@ -59,6 +59,7 @@ Then open MMM, turn the service on, pair a client on the **Clients** screen, and
 mmm pair <token>                               # in Termux, on the phone
 mmm pair <token> --ssh phone --ssh-port 8022   # from a computer, through sshd
 mmm pair <token> --adb                         # from a computer, over USB
+mmm pair <token> --tailnet phone               # from a computer on your tailnet
 ```
 
 [Install guide](docs/install.md) · [Pairing](docs/pairing.md) ·
@@ -92,7 +93,7 @@ mmm pair <token> --adb                         # from a computer, over USB
   subscription keeps receiving while nobody is connected, buffers into a ring, and
   replays when you come back — so an SMS that arrives while your script restarts is
   not lost. It survives a reboot too.
-- **Access** is loopback-only plus a token per client. Tokens are `full` or scoped to
+- **Access** is loopback-only by default (Tailscale optional) plus a token per client. Tokens are `full` or scoped to
   an allow-list, enforced in the app. See the [security model](docs/security.md):
   a full token is full control of the phone, by design.
 
