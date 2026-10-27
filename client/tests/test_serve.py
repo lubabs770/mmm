@@ -5,6 +5,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -248,3 +249,12 @@ def test_handing_over_frees_the_port_without_ending_the_wait(setup, monkeypatch)
     import socket as sock
     with sock.socket() as probe:
         probe.bind(("127.0.0.1", daemon.port))
+
+
+def test_the_rules_path_is_shown_with_a_tilde(setup, monkeypatch):
+    from mmm import serve
+
+    monkeypatch.setattr(serve.Path, "home", classmethod(lambda cls: Path("/home/someone")))
+    assert serve._tilde(Path("/home/someone/.config/mmm/rules.json")) == "~/.config/mmm/rules.json"
+    assert serve._tilde(Path("/home/someoneelse/rules.json")) == "/home/someoneelse/rules.json"
+    assert serve._tilde(Path("/etc/rules.json")) == "/etc/rules.json"
