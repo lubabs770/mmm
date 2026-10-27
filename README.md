@@ -35,6 +35,22 @@ mmm mcp        # an MCP server, so an AI assistant can use the phone
 mmm ui         # a web UI, plus rules: a text's first word runs a command here
 ```
 
+## Screenshots
+
+The app on a keypad flip phone (TCL Flip 2), mirrored with scrcpy:
+
+| Status | Clients | Settings |
+|---|---|---|
+| ![Status: the service, its address and tailnet listener, and the device's root and priv-app state](docs/images/app-status.png) | ![Clients: pair a new client, or revoke one](docs/images/app-clients.png) | ![Settings: port, listen on tailnet, start on boot, event backlog](docs/images/app-settings.png) |
+
+The web client on the computer, `mmm ui` ([more](docs/ui.md)):
+
+| Messages | Rules |
+|---|---|
+| ![Messages: SMS threads from the phone, with a box to send a text](docs/images/ui-messages.png) | ![Rules: the trigger word "ls" runs ls and replies; recent runs below](docs/images/ui-rules.png) |
+| **Phone** | **Mac** |
+| ![Phone: battery, signal, network, Android version, root, priv-app and MMM version](docs/images/ui-phone.png) | ![Mac: the daemon, the phone link, start at login, and rule runs](docs/images/ui-mac.png) |
+
 ## What is in here
 
 | | |

@@ -24,6 +24,13 @@ Like the rest of the client it has no dependencies, and it works on macOS and Li
 | **Console** | Any class, method or field | Any call; Java objects come back as clickable handles |
 | **Mac** | Daemon, phone link, rules, log | Start at login |
 
+![Messages](images/ui-messages.png)
+![Rules: a trigger word, its command, and recent runs](images/ui-rules.png)
+![Phone status](images/ui-phone.png)
+![Android settings, searchable and editable](images/ui-android-settings.png)
+![Console: call any class or method](images/ui-console.png)
+![Mac: daemon, phone link, start at login, log](images/ui-mac.png)
+
 Writing `Secure` and `Global` settings needs `WRITE_SECURE_SETTINGS`, which the
 priv-app holds. `System` settings need the `WRITE_SETTINGS` appop.
 
