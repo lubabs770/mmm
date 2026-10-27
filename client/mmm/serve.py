@@ -28,6 +28,7 @@ import subprocess
 import sys
 import threading
 import time
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
@@ -194,7 +195,12 @@ def _systemd_unit() -> Path:
 
 
 def _serve_argv(port: int, profile: str | None) -> list[str]:
-    argv = [sys.executable, "-m", "mmm.cli"]
+    # From the single-file .pyz, `-m mmm.cli` finds nothing: run the .pyz itself.
+    entry = sys.argv[0] if sys.argv else ""
+    if entry and os.path.isfile(entry) and zipfile.is_zipfile(entry):
+        argv = [sys.executable, os.path.abspath(entry)]
+    else:
+        argv = [sys.executable, "-m", "mmm.cli"]
     if profile:
         argv += ["--profile", profile]
     return argv + ["serve", "--port", str(port)]
@@ -358,6 +364,10 @@ class Daemon:
 
     def stop(self) -> None:
         self._stop.set()
+        self._release()
+
+    def _release(self) -> None:
+        """Frees the port, serve.json and the connection without ending wait()."""
         if self.httpd is not None:
             self.httpd.shutdown()
             self.httpd.server_close()
@@ -559,9 +569,16 @@ class Daemon:
         return {"enabled": False, "handover": False}
 
     def _handover(self, start: list[str]) -> None:
+        # Not stop(): that ends wait(), and the main thread would exit the process
+        # before the system copy was ever started.
         time.sleep(0.5)
-        self.stop()
-        subprocess.run(start, capture_output=True)
+        self._release()
+        done = subprocess.run(start, capture_output=True, text=True)
+        if done.returncode != 0:
+            log.error("handover failed: %s exited %s: %s", start[0], done.returncode,
+                      (done.stderr or done.stdout).strip())
+        else:
+            log.info("handed over to the system service")
         os._exit(0)
 
     # ------------------------------------------------------------ console
@@ -832,7 +849,12 @@ def setup_logging() -> None:
 def serve(profile: str | None, port: int) -> int:
     """Entry point for ``mmm serve``."""
     setup_logging()
+    # During a handover the old copy is still shutting down for a moment.
+    deadline = time.monotonic() + 10
     other = running()
+    while other and int(other["pid"]) != os.getpid() and time.monotonic() < deadline:
+        time.sleep(0.5)
+        other = running()
     if other and int(other["pid"]) != os.getpid():
         print(f"mmm serve is already running (pid {other['pid']}, port {other['port']})", file=sys.stderr)
         return 1
