@@ -211,7 +211,8 @@ mmm/
   LLM.md  LICENSE  README.md
   .github/workflows/
     ci.yml                  # every push/PR: Kotlin tests, lint, APK debug build, python tests
-    release.yml             # on tag v*: signed APK + magisk zip + wheel + pyz → GitHub Release
+    release.yml             # on tag v*: signed APK + magisk zip → GitHub Release
+    release-client.yml      # on tag client-v*: wheel + pyz → its own GitHub Release (added later)
     docs.yml                # on main docs/** change: build site + llms.txt → GitHub Pages
 ```
 

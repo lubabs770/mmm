@@ -62,14 +62,22 @@ Without the module, MMM still works as a normal app. Only privileged calls fail.
 pip install "git+https://github.com/lubabs770/mmm#subdirectory=client"
 ```
 
+The client is released **separately from the app**, on `client-v*` tags: each
+**MMM client** release on the releases page carries a wheel and a `.pyz`. Its version
+moves on its own; any client works with any app that speaks protocol 1.
+
+```sh
+pipx install mmm-<version>-py3-none-any.whl   # or pip install
+```
+
 It has no dependencies, which is the point: it installs on Termux, where wheels are
 scarce, and on any Linux, macOS or Windows box with Python 3.10 or newer.
 
-There is also a single-file build, `mmm-<version>.pyz`, for places where you would
-rather not install anything:
+There is also a single-file build, `mmm-client-<version>.pyz`, for places where you
+would rather not install anything:
 
 ```sh
-python mmm-0.1.0.pyz status
+python mmm-client-0.3.0.pyz status
 ```
 
 ### On the phone, in Termux

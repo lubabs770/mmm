@@ -105,7 +105,8 @@ pip install -e "client[dev]" && python -m pytest client/tests -q
 ```
 
 - **Builds happen in CI**, not on a dev box: `ci.yml` on every push and PR,
-  `release.yml` on a `v*` tag. Never dispatch a workflow on `main` without being
+  `release.yml` on a `v*` tag (app + Magisk module), `release-client.yml` on a
+  `client-v*` tag (wheel + pyz). Never dispatch a workflow on `main` without being
   asked to.
 - JVM tests must not touch Android classes at the point they execute: the unit-test
   `android.jar` is a stub whose methods throw. `org.json` is a real test dependency
