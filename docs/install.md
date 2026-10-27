@@ -48,6 +48,19 @@ Flash it in the Magisk app and reboot. The Status screen then shows *Priv-app: y
 and privileged calls — answering and ending calls through `TelecomManager`, reading
 privileged phone state — start working.
 
+**Then install the APK once more, over the module, with `-g`:**
+
+```sh
+adb install -r -g mmm-<version>.apk
+```
+
+Android 10 and later treat reading and receiving SMS as *restricted* permissions. An
+app that arrives only through the module never gets them, and `pm grant` cannot
+change that, so SMS events (and anything built on them, like `mmm watch` or rules)
+silently never fire. Installing with `-g` through adb exempts them. If the app is
+ever reset to the module's copy (say, "uninstall updates"), run it again. See
+[#3](https://github.com/lubabs770/mmm/issues/3).
+
 The allowlist XML is **generated from the app manifest** during the build
 (`magisk/gen_privapp_xml.py`). This matters: on Android 9+ with
 `ro.control_privapp_permissions=enforce`, a priv-app that requests a privileged
