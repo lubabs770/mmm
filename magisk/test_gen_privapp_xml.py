@@ -16,6 +16,8 @@ def test_the_real_manifest_yields_the_privileged_permissions():
     assert found == [
         "android.permission.MODIFY_PHONE_STATE",
         "android.permission.READ_PRIVILEGED_PHONE_STATE",
+        "android.permission.WRITE_SECURE_SETTINGS",
+        "android.permission.START_ACTIVITIES_FROM_BACKGROUND",
     ]
 
 
