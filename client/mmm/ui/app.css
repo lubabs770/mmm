@@ -18,8 +18,9 @@
   color-scheme: light dark;
 }
 
+/* Dark: when the system is dark unless "light" is picked, or when "dark" is picked. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #111317;
     --panel: #181b21;
     --sunk: #20242b;
@@ -36,6 +37,24 @@
     --bad: #f87171;
   }
 }
+:root[data-theme="dark"] {
+  --bg: #111317;
+  --panel: #181b21;
+  --sunk: #20242b;
+  --text: #e7e9ee;
+  --muted: #9aa3b2;
+  --line: #2b3038;
+  --accent: #2dd4bf;
+  --accent-text: #06201d;
+  --mine: #115e59;
+  --mine-text: #e6fffb;
+  --theirs: #232830;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -59,7 +78,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .nav button:hover { background: var(--sunk); color: var(--text); }
 .nav button[aria-current="page"] { background: var(--sunk); color: var(--text); font-weight: 600; }
-.link { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--muted); font-size: 12px; }
+.theme { margin-top: auto; padding: 4px 6px; }
+.theme select { width: 100%; font-size: 12px; padding: 4px 8px; }
+.link { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--muted); font-size: 12px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
 .link.up .dot { background: var(--ok); }
 .link.down .dot { background: var(--bad); }
@@ -150,7 +171,8 @@ td.value { overflow-wrap: anywhere; }
   .nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px; }
   .brand { display: none; }
   .nav button { white-space: nowrap; }
-  .link { margin: 0 0 0 auto; }
+  .theme { margin: 0 0 0 auto; }
+  .link { margin: 0; }
   main { padding: 16px; }
   .messages { grid-template-columns: 1fr; height: auto; }
   .threads { max-height: 220px; }

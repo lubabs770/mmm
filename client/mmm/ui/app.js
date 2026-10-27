@@ -426,6 +426,20 @@ views.mac = async () => {
   refreshTimer = setInterval(draw, 5000);
 };
 
+// -------------------------------------------------------------------- theme
+
+const themePicker = document.getElementById("theme");
+function applyTheme(value) {
+  if (value) document.documentElement.dataset.theme = value;
+  else delete document.documentElement.dataset.theme;
+}
+try { themePicker.value = localStorage.getItem("mmm-theme") || ""; } catch (_) { /* private mode */ }
+applyTheme(themePicker.value);
+themePicker.addEventListener("change", () => {
+  applyTheme(themePicker.value);
+  try { localStorage.setItem("mmm-theme", themePicker.value); } catch (_) { /* private mode */ }
+});
+
 // -------------------------------------------------------------------- start
 
 if (!SECRET) banner("Open this page with `mmm ui`; it carries the secret the daemon wants.");
