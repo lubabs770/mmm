@@ -1,7 +1,8 @@
 # Web UI and rules — `mmm serve` and `mmm ui`
 
 `mmm serve` is a small daemon on your computer. It holds one connection to the
-phone, runs **rules** for incoming texts, and serves a web UI on `127.0.0.1`.
+phone, runs **rules** for incoming texts, pictures (MMS) and other phone events, and
+serves a web UI on `127.0.0.1`.
 `mmm ui` opens that UI, starting the daemon first if it is not running.
 
 ```sh
@@ -100,6 +101,8 @@ nothing a sender types can be executed. The command gets it as data:
 | `MMM_ARGS` | everything after the trigger word (the whole message for `*`) |
 | `MMM_SENDER` | the sender's number |
 | `MMM_TRIGGER` | the first word |
+| `MMM_EVENT` | `sms` for texts and pictures, otherwise the rule's event |
+| `MMM_MEDIA` | pictures from an MMS, saved on this computer, one path per line (empty for a text) |
 
 Because there is no shell, `$MMM_ARGS` written in a command stays literal. To use a
 variable, let `sh` read it from the environment — it is then data, not code:

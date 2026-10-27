@@ -16,6 +16,14 @@ def got(intent):
 a.run()
 ```
 
+Curated helpers, shared with the web UI and the MCP server:
+
+```python
+from mmm.android import sms, network
+sms.send(a, "+15550100199", "hello")
+print(network.wifi(a)["ssid"])
+```
+
 Install:
 
 ```sh
@@ -28,6 +36,9 @@ Pair it with a token from the app's Clients screen:
 mmm pair <token>                 # in Termux, on the phone
 mmm pair <token> --ssh phone     # from a computer, through Termux's sshd
 mmm pair <token> --adb           # from a computer, over USB
+mmm pair <token> --tailnet phone # from a computer on your tailnet
 ```
+
+`mmm ui` opens the web UI; `mmm mcp` runs an MCP server.
 
 Full documentation: see the `docs/` directory at the repository root.

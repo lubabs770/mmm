@@ -132,6 +132,14 @@ name = a.subscribe(
 a.unsubscribe(name)
 ```
 
+A broadcast that carries a MIME type only matches a subscription that names it, so
+pass `types` for those (app 0.2.3 or later). An MMS waiting to be fetched is one:
+
+```python
+a.subscribe(["android.provider.Telephony.WAP_PUSH_RECEIVED"], name="mms",
+            durable=True, types=["application/vnd.wap.mms-message"], handler=print)
+```
+
 A **durable** subscription keeps receiving while nobody is connected. Its events wait
 in a ring buffer (500 events or 24 hours by default) and replay when a client
 subscribes again under the same name with the same token — so an SMS that arrives
@@ -181,6 +189,42 @@ method returns at once; anything else waits for your return value, with a timeou
 never returns can take the system service down with it.
 
 Proxies need a full-scope token, and their events are never buffered.
+
+## Curated helpers: `mmm.android`
+
+Plain functions over a connection, for the jobs everyone needs. The web UI, the MCP
+server and `mmm serve` use the same ones.
+
+| Module | Functions | Needs |
+|---|---|---|
+| `mmm.android` | `facade(a, method, *args)`, `shell(a, command)`, `restart_listener(a)` | `shell`: root |
+| `mmm.android.sms` | `send`, `recent`, `decode`, `send_mms`, `download_mms`, `parse_notification`, `parse_retrieved` | MMS: full token; receiving also root |
+| `mmm.android.calls` | `log`, `contacts` | scoped token is enough |
+| `mmm.android.notifications` | `active` (every app's), `post` | `active`: root |
+| `mmm.android.apps` | `installed`, `set_enabled` | root |
+| `mmm.android.network` | `wifi` (state, signal, IP, saved networks) | root |
+| `mmm.android.settings` | `read`, `write` (system / secure / global) | full token |
+
+Anything that goes through the app's `Facade` works with a scoped token; the rest is
+raw reflection, or root through the app's own `su` helper (`shell`).
+
+```python
+from mmm import Android
+from mmm.android import calls, notifications, sms
+
+with Android() as a:
+    for n in notifications.active(a):
+        print(n["package"], n["title"], n["text"])
+    print(calls.log(a, 5))
+    sms.send_mms(a, "+15550100199", open("chart.png", "rb").read(), "chart.png", "image/png", "today")
+```
+
+Sending an MMS builds the message on the computer, writes it to a MediaStore row the
+app owns and hands it to the platform's MMS service, so it needs no change to the
+app. Receiving goes the other way: `parse_notification` reads the push that says a
+message is waiting, `download_mms` fetches it through the same platform service, and
+`parse_retrieved` returns its parts (`type`, `name`, `data`). `mmm serve` does all of
+this for you and hands the pictures to your [rules](ui.md).
 
 ## Settings
 

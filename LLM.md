@@ -23,8 +23,10 @@ app/                                     Android app (Kotlin, Compose M3)
   src/test/   JVM unit tests (no Android types in what they touch)
 magisk/       module template, gen_privapp_xml.py, build.sh, its own tests
 client/mmm/   client.py (Android, JavaObject), transport.py, config.py,
-              cli.py, mcp.py, rules.py (SMS rules), serve.py (daemon + HTTP API),
-              ui/ (the web UI: plain HTML/JS/CSS, packaged as data)
+              cli.py, mcp.py, rules.py (rules for texts, pictures and events),
+              serve.py (daemon + HTTP API), ui/ (the web UI: plain HTML/JS/CSS),
+              android/ (curated helpers: sms incl. MMS, calls, notifications,
+              apps, network, settings; shared by serve, mcp and scripts)
 client/tests/ tests against a fake NDJSON server (tests/fake_server.py)
 docs/         the docs site; gen_llms.py builds llms.txt
 ```
@@ -130,6 +132,13 @@ pip install -e "client[dev]" && python -m pytest client/tests -q
 
 ## Things that look wrong but are not
 
+- `mmm.android.shell` runs `su -c` through the app's own `Root.run`, reached by
+  reflection like anything else. Whatever a helper interpolates into a command is
+  validated first (`apps.PACKAGE`), and `apps.PROTECTED` refuses to disable MMM or
+  Tailscale, which carry the link the request travels over.
+- `sms.download_mms` uses the platform `MmsService`, not the phone's messaging app,
+  on purpose: some stock apps resolve the MMSC proxy off the MMS network and never
+  fetch anything. Subscriptions can name MIME `types` because that push is typed.
 - `Facade` adds no powers — a full token can call everything it calls. It exists so a
   scoped token can be allowed one class instead of a dozen.
 - `cls` returns a handle (the spec says so), while a `Class` *returned from a call*

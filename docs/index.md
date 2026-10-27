@@ -52,10 +52,13 @@ pairing in the app.
 
 - **[Install](install.md)** — the APK, the optional Magisk module, the Python client.
 - **[Pairing](pairing.md)** — tokens, scopes, and the three transports.
-- **[Python guide](python.md)** — objects, calls, events, proxies.
+- **[Python guide](python.md)** — objects, calls, events, proxies, and the curated
+  helpers in `mmm.android` (SMS and MMS, apps, Wi-Fi, notifications, calls).
 - **[Protocol](protocol.md)** — the wire format, if you are writing another client.
 - **[Recipes](recipes.md)** — an SMS bot, a call screener, a notification forwarder.
 - **[MCP](mcp.md)** — letting an AI assistant use the phone.
+- **[Web UI and rules](ui.md)** — `mmm ui`, and running commands when a text, a
+  picture or a phone event arrives.
 - **[Security model](security.md)** — what a token is worth, and what it isn't.
 
 ## What it runs on
