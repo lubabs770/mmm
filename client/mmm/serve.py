@@ -36,19 +36,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from . import android as phone
 from . import rules as rules_module
+from .android import settings, sms
 from .client import Android, AndroidError, JavaClassRef, JavaObject, MmmError, json_default
 from .config import config_path
 
 DEFAULT_UI_PORT = 7358
 SMS_ACTION = "android.provider.Telephony.SMS_RECEIVED"
 SUBSCRIPTION = "mmm-serve"
-FACADE = "lubabs770.mmm.modemizer.rpc.Facade"
-SETTINGS_CLASSES = {
-    "system": "android.provider.Settings$System",
-    "secure": "android.provider.Settings$Secure",
-    "global": "android.provider.Settings$Global",
-}
 LABEL = "lubabs770.mmm.serve"
 MANAGED_ENV = "MMM_SERVE_MANAGED"
 RUNS_KEPT = 1000
@@ -116,83 +112,6 @@ def running() -> dict | None:
         return info
     except (OSError, ValueError, KeyError, TypeError):
         return None
-
-
-# ----------------------------------------------------------- phone helpers
-
-
-def parse_cursor_dump(dump: str) -> dict[str, str]:
-    """``DatabaseUtils.dumpCursorToString`` output → ``{name: value}``.
-
-    One RPC call for the whole table instead of two per row over the network.
-    A value that spans lines keeps its newlines.
-    """
-    out: dict[str, str] = {}
-    row: dict[str, str] = {}
-    last: str | None = None
-    for line in dump.splitlines():
-        if re.match(r"^\d+ \{$", line):
-            row, last = {}, None
-        elif line == "}":
-            if "name" in row:
-                out[row["name"]] = "" if row.get("value") == "null" else row.get("value", "")
-            last = None
-        elif line.startswith("   ") and "=" in line and re.match(r"^   \w+=", line):
-            key, _, value = line[3:].partition("=")
-            row[key] = value
-            last = key
-        elif last is not None and not line.startswith((">>>>>", "<<<<<")):
-            row[last] += "\n" + line
-    return out
-
-
-class Phone:
-    """The RPC calls the UI and the rules need, in one place."""
-
-    def __init__(self, android: Android) -> None:
-        self.a = android
-
-    def facade(self, method: str, *args: Any) -> Any:
-        return self.a.call(self.a.cls(FACADE), method, self.a.context, *args)
-
-    def decode_sms(self, payload: dict) -> tuple[str, str]:
-        """Sender and full text of an SMS_RECEIVED intent, decoded on the phone."""
-        extras = (payload or {}).get("extras") or {}
-        pdus = extras.get("pdus") or []
-        fmt = extras.get("format") or "3gpp"
-        sms = self.a.cls("android.telephony.SmsMessage")
-        sender, parts = "", []
-        for pdu in pdus:
-            message = self.a.call(sms, "createFromPdu", pdu, fmt)
-            sender = sender or str(self.a.call(message, "getDisplayOriginatingAddress") or "")
-            parts.append(str(self.a.call(message, "getMessageBody") or ""))
-            message.release()
-        return sender, "".join(parts)
-
-    def settings_list(self, namespace: str) -> dict[str, str]:
-        if namespace not in SETTINGS_CLASSES:
-            raise ValueError(f"namespace must be one of {', '.join(SETTINGS_CLASSES)}")
-        resolver = self.a.call(self.a.context, "getContentResolver")
-        uri = self.a.call(self.a.cls("android.net.Uri"), "parse", f"content://settings/{namespace}")
-        cursor = self.a.call(resolver, "query", uri, ["name", "value"], None, None, None)
-        if cursor is None:
-            return {}
-        try:
-            dump = self.a.call(self.a.cls("android.database.DatabaseUtils"), "dumpCursorToString", cursor)
-        finally:
-            self.a.call(cursor, "close")
-        return dict(sorted(parse_cursor_dump(str(dump)).items()))
-
-    def settings_put(self, namespace: str, name: str, value: str) -> bool:
-        if namespace not in SETTINGS_CLASSES:
-            raise ValueError(f"namespace must be one of {', '.join(SETTINGS_CLASSES)}")
-        resolver = self.a.call(self.a.context, "getContentResolver")
-        cls = self.a.cls(SETTINGS_CLASSES[namespace])
-        return bool(self.a.call(cls, "putString", resolver, name, value))
-
-    def restart_listener(self) -> None:
-        runtime = self.a.cls("lubabs770.mmm.modemizer.service.MmmRuntime")
-        self.a.call(self.a.get(runtime, "INSTANCE"), "restartListener", self.a.context)
 
 
 # ------------------------------------------------------- start at login
@@ -321,7 +240,6 @@ class Daemon:
         write_info: bool = True,
     ) -> None:
         self.android = android
-        self.phone = Phone(android)
         self.port = port
         self.profile = profile
         self.rules_file = rules_file or rules_module.rules_path()
@@ -421,7 +339,7 @@ class Daemon:
                 return
             self._last_event = event_id
             _write_private(self.state / "serve-state.json", json.dumps({"last_event_id": event_id}))
-        sender, text = self.phone.decode_sms(payload)
+        sender, text = sms.decode(self.android, payload)
         log.info("sms from %s: %d chars", sender, len(text))
         self.broadcast("sms", {"sender": sender, "text": text, "ts": int(time.time() * 1000)})
         rule = rules_module.match(self.rules, text)
@@ -439,7 +357,7 @@ class Daemon:
             reply = rules_module.reply_text(result.stdout)
             if reply:
                 try:
-                    self.phone.facade("smsSend", sender, reply)
+                    sms.send(self.android, sender, reply)
                     replied = True
                 except MmmError as error:
                     log.warning("reply to %s failed: %s", sender, error)
@@ -791,7 +709,7 @@ class Handler(BaseHTTPRequestHandler):
             return d.set_login(bool(self._body().get("on")))
         if (method, path) == ("GET", "/api/phone"):
             info = d.android.ping()
-            return {"info": info, "status": d.to_page(d.phone.facade("deviceStatus"))}
+            return {"info": info, "status": d.to_page(phone.facade(d.android, "deviceStatus"))}
         if path == "/api/mmm-settings":
             if method == "GET":
                 return d.android.settings()
@@ -799,23 +717,23 @@ class Handler(BaseHTTPRequestHandler):
             key = str(body["key"])
             result = d.android.set_setting(key, body.get("value"))
             if key in ("port", "tailnet"):
-                d.phone.restart_listener()
+                phone.restart_listener(d.android)
             return result
         if path == "/api/sms":
             if method == "GET":
                 limit = max(1, min(int((query.get("limit") or ["200"])[0]), 1000))
-                return d.to_page(d.phone.facade("smsList", limit))
+                return d.to_page(sms.recent(d.android, limit))
             body = self._body()
             to, text = str(body.get("to") or "").strip(), str(body.get("body") or "")
             if not to or not text:
                 raise HttpError(400, "to and body are both required")
-            return {"sent": bool(d.phone.facade("smsSend", to, text))}
+            return {"sent": sms.send(d.android, to, text)}
         match = re.fullmatch(r"/api/settings/(system|secure|global)", path)
         if match:
             if method == "GET":
-                return d.phone.settings_list(match.group(1))
+                return settings.read(d.android, match.group(1))
             body = self._body()
-            return {"ok": d.phone.settings_put(match.group(1), str(body["name"]), str(body["value"]))}
+            return {"ok": settings.write(d.android, match.group(1), str(body["name"]), str(body["value"]))}
         if path == "/api/rules":
             if method == "PUT":
                 body = self._body()
