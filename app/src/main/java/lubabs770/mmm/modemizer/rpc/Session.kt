@@ -1,6 +1,7 @@
 package lubabs770.mmm.modemizer.rpc
 
 import android.content.Context
+import android.os.Looper
 import android.util.Log
 import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
@@ -14,9 +15,11 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import lubabs770.mmm.modemizer.auth.AuditLog
 import lubabs770.mmm.modemizer.auth.ClientToken
 import lubabs770.mmm.modemizer.auth.TokenStore
@@ -186,21 +189,29 @@ class Session(
                 val onMain = request.optBoolean("main", false)
                 // IO, not Default: the scope's dispatcher would be replaced by whatever is
                 // passed here, and blocking calls must not sit on the few CPU threads.
-                workers.launch(if (onMain) Dispatchers.Main else Dispatchers.IO) {
-                    complete(id, request, op, current)
+                // Always IO even for `main`: only the call itself goes to the main thread,
+                // because writing the reply there is NetworkOnMainThreadException, which
+                // kills the process.
+                workers.launch(Dispatchers.IO) {
+                    complete(id, request, op, current, onMain)
                 }
             }
         }
     }
 
-    private fun complete(id: Any?, request: JSONObject, op: String, caller: ClientToken) {
+    private fun complete(id: Any?, request: JSONObject, op: String, caller: ClientToken, onMain: Boolean = false) {
         try {
             if (wantsExpand(request) && !caller.scope.full) {
                 // Expanding calls every getter on an object, none of them scope-checked.
                 audit.log(AuditLog.Kind.REJECT, "$op with expand outside scope", caller.id)
                 throw SecurityException("expand requires a full-scope token")
             }
-            sendResult(id, execute(op, request, caller), request)
+            val value = if (onMain) {
+                runBlocking(Dispatchers.Main) { execute(op, request, caller) }
+            } else {
+                execute(op, request, caller)
+            }
+            sendResult(id, value, request)
         } catch (t: Throwable) {
             sendError(id, t)
         }
@@ -482,6 +493,12 @@ class Session(
     /** False when the message did not go out, because the session is closed or just died. */
     private fun send(obj: JSONObject): Boolean {
         if (closed) return false
+        // A proxy callback the framework makes on the main thread lands here too, and
+        // a socket write there is NetworkOnMainThreadException. Write from IO and wait,
+        // so the caller still learns whether it went out.
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            return runBlocking { workers.async(Dispatchers.IO) { send(obj) }.await() }
+        }
         return try {
             synchronized(writeLock) {
                 writer.write(obj.toString())
