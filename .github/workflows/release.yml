@@ -33,18 +33,9 @@ jobs:
           code=$(( ${major:-0} * 10000 + ${minor:-0} * 100 + ${patch:-0} ))
           [ "$code" -gt 0 ] || code=1
 
-          # Python insists on PEP 440, which Android version names do not follow:
-          # 0.1.0-rc1 becomes 0.1.0rc1, and anything else keeps its suffix as a
-          # local version (0.0.0-test -> 0.0.0+test).
-          py=$(echo "$name" | sed -E 's/-(rc|a|b)/\1/')
-          if ! echo "$py" | grep -qE '^[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?$'; then
-            py="${core}+$(echo "${name#"$core"}" | tr -cd 'A-Za-z0-9')"
-          fi
-
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          echo "py=$py" >> "$GITHUB_OUTPUT"
-          echo "building $name (versionCode $code, python $py)"
+          echo "building $name (versionCode $code)"
 
       - uses: actions/setup-java@v4
         with:
@@ -59,11 +50,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      # The Python client is released on its own (release-client.yml, client-v* tags).
       - name: tests before anything is published
         run: |
           gradle testDebugUnitTest --no-daemon
-          pip install -e "client[dev]"
-          python -m pytest client/tests -q
+          pip install pytest
           (cd magisk && python -m pytest -q)
 
       - name: decode the signing key
@@ -110,21 +101,6 @@ jobs:
             "${{ steps.version.outputs.name }}" \
             "${{ steps.version.outputs.code }}" \
             "dist/mmm-magisk-${{ steps.version.outputs.name }}.zip"
-
-      - name: build the python wheel and the single-file pyz
-        run: |
-          version="${{ steps.version.outputs.py }}"
-          sed -i "s/^version = \".*\"/version = \"$version\"/" client/pyproject.toml
-          sed -i "s/^__version__ = \".*\"/__version__ = \"$version\"/" client/mmm/__init__.py
-          grep -m1 '^version' client/pyproject.toml
-          pip install build
-          python -m build --wheel --outdir dist client
-          # A single file that runs anywhere Python does: Termux, Linux, macOS, Windows.
-          mkdir -p "$RUNNER_TEMP/pyz"
-          cp -r client/mmm "$RUNNER_TEMP/pyz/mmm"
-          printf 'from mmm.cli import main\nraise SystemExit(main())\n' > "$RUNNER_TEMP/pyz/__main__.py"
-          python -m zipapp "$RUNNER_TEMP/pyz" -o "dist/mmm-${{ steps.version.outputs.name }}.pyz" -p "/usr/bin/env python3"
-          python "dist/mmm-${{ steps.version.outputs.name }}.pyz" --version
 
       - name: checksums
         run: |

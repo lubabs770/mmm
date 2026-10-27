@@ -1,0 +1,89 @@
+name: release-client
+
+# The Python client (CLI, library, MCP server, mmm serve / mmm ui) is released on
+# its own tag line, because it runs on the computer and changes far more often
+# than the app. App releases stay on v* (release.yml).
+on:
+  push:
+    tags: ['client-v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, without client-v (dry run; nothing is published)'
+        required: true
+        default: '0.0.0-test'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: work out the version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            name="${GITHUB_REF_NAME#client-v}"
+          else
+            name="${{ github.event.inputs.version }}"
+          fi
+          # PEP 440: 0.3.0-rc1 becomes 0.3.0rc1, and anything else keeps its suffix as
+          # a local version (0.0.0-test -> 0.0.0+test).
+          core=${name%%-*}
+          py=$(echo "$name" | sed -E 's/-(rc|a|b)/\1/')
+          if ! echo "$py" | grep -qE '^[0-9]+(\.[0-9]+)*((a|b|rc)[0-9]+)?$'; then
+            py="${core}+$(echo "${name#"$core"}" | tr -cd 'A-Za-z0-9')"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "py=$py" >> "$GITHUB_OUTPUT"
+          echo "building client $name (python $py)"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: tests before anything is published
+        run: |
+          pip install -e "client[dev]"
+          python -m pytest client/tests -q
+
+      - name: build the wheel and the single-file pyz
+        run: |
+          version="${{ steps.version.outputs.py }}"
+          sed -i "s/^version = \".*\"/version = \"$version\"/" client/pyproject.toml
+          sed -i "s/^__version__ = \".*\"/__version__ = \"$version\"/" client/mmm/__init__.py
+          grep -m1 '^version' client/pyproject.toml
+          pip install build
+          python -m build --wheel --outdir dist client
+          # A single file that runs anywhere Python does: Termux, Linux, macOS, Windows.
+          mkdir -p "$RUNNER_TEMP/pyz"
+          cp -r client/mmm "$RUNNER_TEMP/pyz/mmm"
+          printf 'from mmm.cli import main\nraise SystemExit(main())\n' > "$RUNNER_TEMP/pyz/__main__.py"
+          python -m zipapp "$RUNNER_TEMP/pyz" -o "dist/mmm-client-${{ steps.version.outputs.name }}.pyz" -p "/usr/bin/env python3"
+          python "dist/mmm-client-${{ steps.version.outputs.name }}.pyz" --version
+
+      - name: checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mmm-client-${{ steps.version.outputs.name }}
+          path: dist/*
+
+      # --latest=false keeps "latest release" pointing at the app, which is what the
+      # install docs send people to for the APK.
+      - name: publish the github release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "MMM client ${{ steps.version.outputs.name }}" \
+            --latest=false \
+            --generate-notes

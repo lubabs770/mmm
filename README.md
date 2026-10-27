@@ -50,7 +50,7 @@ mmm ui         # a web UI, plus rules: a text's first word runs a command here
 # the app: grab mmm-<version>.apk from the releases page
 adb install -r mmm-0.1.0.apk
 
-# the client
+# the client (released on its own, as "MMM client" on the same page)
 pip install "git+https://github.com/lubabs770/mmm#subdirectory=client"
 ```
 
@@ -111,7 +111,8 @@ mmm pair <token> --tailnet phone               # from a computer on your tailnet
 
 `LLM.md` is the orientation file: layout, invariants, and the things that look wrong
 but are not. Builds and tests run in CI (`ci.yml` on every push and pull request,
-`release.yml` on a `v*` tag).
+`release.yml` on a `v*` tag for the app and Magisk module, `release-client.yml` on a
+`client-v*` tag for the Python client).
 
 ```sh
 gradle testDebugUnitTest lintDebug assembleDebug
