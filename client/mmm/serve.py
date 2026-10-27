@@ -48,6 +48,11 @@ SMS_ACTION = "android.provider.Telephony.SMS_RECEIVED"
 SUBSCRIPTION = "mmm-serve"
 #: Non-durable: a battery-low from hours ago is not worth running a command for.
 EVENT_SUBSCRIPTION = "mmm-serve-events"
+#: Durable like SMS: a picture that arrives while the daemon is down is not lost.
+MMS_SUBSCRIPTION = "mmm-serve-mms"
+WAP_PUSH_ACTION = "android.provider.Telephony.WAP_PUSH_RECEIVED"
+MMS_TYPE = "application/vnd.wap.mms-message"
+MMS_KEPT_DAYS = 30
 LABEL = "lubabs770.mmm.serve"
 MANAGED_ENV = "MMM_SERVE_MANAGED"
 RUNS_KEPT = 1000
@@ -257,6 +262,7 @@ class Daemon:
         self.runs: collections.deque[dict] = collections.deque(maxlen=RUNS_KEPT)
         self._load_runs()
         self._last_event = self._load_last_event()
+        self._last_mms_event = self._load_last_event("serve-mms-state.json")
         self._event_lock = threading.Lock()
         self._listeners: list[queue.Queue] = []
         self._listeners_lock = threading.Lock()
@@ -275,6 +281,10 @@ class Daemon:
         events = self.android.events()
         self.android.subscribe([SMS_ACTION], name=SUBSCRIPTION, durable=True)
         self._subscribe_events()
+        try:
+            self.android.subscribe([WAP_PUSH_ACTION], name=MMS_SUBSCRIPTION, durable=True, types=[MMS_TYPE])
+        except MmmError as error:
+            log.warning("pictures will not arrive: %s", error)
         threading.Thread(target=self._event_loop, args=(events,), name="mmm-sms", daemon=True).start()
         threading.Thread(target=self._ping_loop, name="mmm-ping", daemon=True).start()
         if self.write_info:
@@ -333,8 +343,64 @@ class Daemon:
                     self.handle_sms_event(event.event_id, event.payload)
                 elif event.sub == EVENT_SUBSCRIPTION:
                     self.handle_rule_event(event.payload)
+                elif event.sub == MMS_SUBSCRIPTION:
+                    self.handle_mms_event(event.event_id, event.payload)
             except Exception:
                 log.exception("could not handle event %s", event.event_id)
+
+    def handle_mms_event(self, event_id: int, payload: Any) -> None:
+        """An MMS is waiting: download it off the event thread, then treat it like a text."""
+        with self._event_lock:
+            if event_id <= self._last_mms_event:
+                return
+            self._last_mms_event = event_id
+            _write_private(self.state / "serve-mms-state.json", json.dumps({"last_event_id": event_id}))
+        data = ((payload or {}).get("extras") or {}).get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, (bytes, bytearray)):
+            log.warning("WAP push %s carried no PDU", event_id)
+            return
+        try:
+            notice = sms.parse_notification(bytes(data))
+        except ValueError as error:
+            log.info("WAP push %s is not an MMS notice: %s", event_id, error)
+            return
+        self._pool.submit(self._receive_mms, event_id, notice)
+
+    def _receive_mms(self, event_id: int, notice: dict) -> None:
+        try:
+            message = sms.parse_retrieved(sms.download_mms(self.android, notice["url"]))
+        except (MmmError, ValueError) as error:
+            log.warning("MMS from %s could not be fetched: %s", notice["from"], error)
+            self.broadcast("mms", {"sender": notice["from"], "error": str(error)})
+            return
+        sender = notice["from"] or message["from"]
+        text = "\n".join(p["data"].decode("utf-8", "replace") for p in message["parts"] if p["type"] == "text/plain")
+        media = self._save_media(event_id, [p for p in message["parts"] if p["type"].startswith("image/")])
+        log.info("mms from %s: %d chars, %d picture(s)", sender, len(text), len(media))
+        self.broadcast("mms", {"sender": sender, "text": text, "pictures": len(media)})
+        rule = rules_module.match(self.rules, text)
+        if rule is None:
+            return
+        if not rules_module.sender_allowed(rule, sender):
+            self._record(rule, sender, text, None, blocked=True)
+            return
+        self._run_rule(rule, sender, text, media)
+
+    def _save_media(self, event_id: int, parts: list[dict]) -> list[str]:
+        """Writes the pictures under state/mms; ones older than MMS_KEPT_DAYS go."""
+        folder = self.state / "mms"
+        folder.mkdir(parents=True, exist_ok=True)
+        cutoff = time.time() - MMS_KEPT_DAYS * 86400
+        for old in folder.iterdir():
+            if old.stat().st_mtime < cutoff:
+                old.unlink(missing_ok=True)
+        paths = []
+        for index, part in enumerate(parts):
+            name = re.sub(r"[^A-Za-z0-9._-]", "_", part["name"] or f"picture{index}") or f"picture{index}"
+            path = folder / f"{event_id}-{index}-{name}"
+            path.write_bytes(part["data"])
+            paths.append(str(path))
+        return paths
 
     def handle_rule_event(self, payload: Any) -> None:
         """A non-SMS broadcast: run every rule listening for it, the intent as JSON on stdin."""
@@ -377,8 +443,8 @@ class Daemon:
             return
         self._pool.submit(self._run_rule, rule, sender, text)
 
-    def _run_rule(self, rule: rules_module.Rule, sender: str, text: str) -> None:
-        result = rules_module.run(rule, text, sender)
+    def _run_rule(self, rule: rules_module.Rule, sender: str, text: str, media: list[str] | tuple = ()) -> None:
+        result = rules_module.run(rule, text, sender, media)
         replied = False
         if rule.reply and result.exit == 0:
             reply = rules_module.reply_text(result.stdout)
@@ -463,9 +529,9 @@ class Daemon:
                 except ValueError:
                     pass
 
-    def _load_last_event(self) -> int:
+    def _load_last_event(self, name: str = "serve-state.json") -> int:
         try:
-            return int(json.loads((self.state / "serve-state.json").read_text())["last_event_id"])
+            return int(json.loads((self.state / name).read_text())["last_event_id"])
         except (OSError, ValueError, KeyError, TypeError):
             return 0
 

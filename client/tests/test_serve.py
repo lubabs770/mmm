@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import time
@@ -302,3 +303,33 @@ def test_mms_wants_an_image(setup):
     _, daemon, _ = setup
     assert request(daemon, "POST", "/api/mms", {"to": SENDER, "image": ""})[0] == 400
     assert request(daemon, "POST", "/api/mms", {"to": SENDER, "image": "not base64!"})[0] == 400
+
+
+def test_an_mms_runs_the_sms_rule_with_its_pictures(setup, monkeypatch):
+    from mmm.android import sms as sms_module
+
+    from .test_android import NOTIFICATION, part, retrieve_conf
+    server, daemon, tmp = setup
+    out = tmp / "mms.json"
+    script = (f"import json, os, sys; json.dump({{'text': sys.stdin.read(), 'sender': os.environ['MMM_SENDER'], "
+              f"'media': os.environ['MMM_MEDIA'].splitlines()}}, open({str(out)!r}, 'w'))")
+    request(daemon, "PUT", "/api/rules", {"rules": [{"trigger": "*", "command": [sys.executable, "-c", script]}]})
+    subscribed = [r for r in server.sent("subscribe") if r.get("name") == "mmm-serve-mms"]
+    assert subscribed and subscribed[-1]["types"] == ["application/vnd.wap.mms-message"]
+
+    fetched = []
+    pdu = retrieve_conf([part(b"\x03\x83\x81\xea\x8etext.txt\x00", b"see this"),
+                         part(b"\x0d\x9e\x85photo.jpg\x00", b"\xff\xd8JPEG")])
+    monkeypatch.setattr(sms_module, "download_mms", lambda a, url: fetched.append(url) or pdu)
+    payload = {"action": "android.provider.Telephony.WAP_PUSH_RECEIVED",
+               "extras": {"data": {"$b64": base64.b64encode(NOTIFICATION).decode()}}}
+    server.event("mmm-serve-mms", payload, event_id=11)
+    assert wait_for(lambda: out.exists() and out.read_text())
+    got = json.loads(out.read_text())
+    assert fetched == ["http://mmsc.example/abc"]
+    assert got["text"] == "see this" and got["sender"] == "+15550100199"
+    assert len(got["media"]) == 1 and Path(got["media"][0]).read_bytes() == b"\xff\xd8JPEG"
+
+    server.event("mmm-serve-mms", payload, event_id=11)  # a replay is not fetched again
+    time.sleep(0.3)
+    assert fetched == ["http://mmsc.example/abc"]

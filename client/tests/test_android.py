@@ -87,3 +87,60 @@ def test_dumpsys_notifications_are_parsed_and_deduplicated():
         {"package": "com.whatsapp", "title": "Family", "text": "Leah added you"},
         {"package": "com.android.systemui", "title": "Battery is low", "text": "9% remaining"},
     ]
+
+
+# ------------------------------------------------------------------- receiving MMS
+
+from mmm.android import sms  # noqa: E402
+
+_SENDER = b"\x80+15550100199/TYPE=PLMN\x00"
+NOTIFICATION = (b"\x8c\x82" + b"\x98T123\x00" + b"\x8d\x92"
+                + b"\x89" + bytes([len(_SENDER)]) + _SENDER
+                + b"\x88\x05\x81\x03\x01\x51\x80"           # expiry: relative, 86400 s
+                + b"\x83http://mmsc.example/abc\x00")
+
+
+def retrieve_conf(parts: list[bytes]) -> bytes:
+    """m-retrieve-conf: From, then multipart/related with [parts] (each headers+data pre-joined)."""
+    sender = b"\x80+15550100199/TYPE=PLMN\x00"
+    head = (b"\x8c\x84" + b"\x98T123\x00" + b"\x8d\x92"
+            + b"\x89" + bytes([len(sender)]) + sender
+            + b"\x84\x1b\xb3\x89application/smil\x00\x8a<smil>\x00")
+    return head + sms._uintvar(len(parts)) + b"".join(parts)
+
+
+def part(headers: bytes, data: bytes) -> bytes:
+    return sms._uintvar(len(headers)) + sms._uintvar(len(data)) + headers + data
+
+
+def test_an_mms_notice_gives_its_url_and_sender():
+    notice = sms.parse_notification(NOTIFICATION)
+    assert notice == {"url": "http://mmsc.example/abc", "from": "+15550100199", "transaction_id": "T123"}
+    with pytest.raises(ValueError):
+        sms.parse_notification(retrieve_conf([]))
+
+
+def test_a_retrieved_mms_yields_its_parts():
+    pdu = retrieve_conf([
+        part(b"\x1b" + b"application/smil\x00" + b"\x85smil.xml\x00", b"<smil/>"),
+        part(b"\x03\x83\x81\xea" + b"\x8etext.txt\x00", b"look at this"),
+        part(b"\x0d\x9e\x85photo.jpg\x00", b"\xff\xd8JPEG"),
+        part(b"\x9d" + b"\x8eanim.gif\x00", b"GIF89a"),
+    ])
+    message = sms.parse_retrieved(pdu)
+    assert message["from"] == "+15550100199"
+    assert [(p["type"], p["name"], p["data"]) for p in message["parts"]] == [
+        ("application/smil", "smil.xml", b"<smil/>"),
+        ("text/plain", "text.txt", b"look at this"),
+        ("image/jpeg", "photo.jpg", b"\xff\xd8JPEG"),
+        ("image/gif", "anim.gif", b"GIF89a"),
+    ]
+
+
+def test_what_send_mms_builds_decodes_back():
+    built = sms.mms_pdu("+15550100199", b"\xff\xd8x", "a.jpg", "image/jpeg", "hi")
+    body = built[built.index(b"\x84\xa3") + 2:]
+    as_retrieved = retrieve_conf([])[:-1] + body  # same multipart, under retrieve-conf headers
+    parts = sms.parse_retrieved(as_retrieved)["parts"]
+    assert [(p["type"], p["name"], p["data"]) for p in parts] == [
+        ("text/plain", "text.txt", b"hi"), ("image/jpeg", "a.jpg", b"\xff\xd8x")]

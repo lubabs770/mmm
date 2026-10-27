@@ -177,7 +177,7 @@ def match(rules: list[Rule], text: str) -> Rule | None:
     return None
 
 
-def environment(text: str, sender: str, rule: Rule) -> dict[str, str]:
+def environment(text: str, sender: str, rule: Rule, media: list[str] | tuple = ()) -> dict[str, str]:
     env = dict(os.environ)
     env.update(
         MMM_TEXT=text,
@@ -185,11 +185,13 @@ def environment(text: str, sender: str, rule: Rule) -> dict[str, str]:
         MMM_TRIGGER=first_word(text),
         MMM_ARGS=rest(text) if rule.trigger != CATCH_ALL else text,
         MMM_EVENT=rule.event,
+        # Pictures that came with an MMS, saved on this computer: one path per line.
+        MMM_MEDIA="\n".join(media),
     )
     return env
 
 
-def run(rule: Rule, text: str, sender: str) -> Result:
+def run(rule: Rule, text: str, sender: str, media: list[str] | tuple = ()) -> Result:
     """Runs the rule's command. The text goes in through stdin and env only."""
     argv = [os.path.expanduser(rule.command[0]), *rule.command[1:]]
     started = time.monotonic()
@@ -201,7 +203,7 @@ def run(rule: Rule, text: str, sender: str) -> Result:
             text=True,
             timeout=rule.timeout,
             cwd=os.path.expanduser("~"),
-            env=environment(text, sender, rule),
+            env=environment(text, sender, rule, media),
         )
     except subprocess.TimeoutExpired as expired:
         return Result(None, _text(expired.stdout), _text(expired.stderr), _ms(started), timed_out=True)
