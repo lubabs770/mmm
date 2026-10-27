@@ -12,6 +12,7 @@ MMM token itself never leaves this process.
 
 from __future__ import annotations
 
+import base64
 import collections
 import hmac
 import json
@@ -38,13 +39,15 @@ from urllib.parse import parse_qs, urlparse
 
 from . import android as phone
 from . import rules as rules_module
-from .android import settings, sms
+from .android import apps, calls, network, notifications, settings, sms
 from .client import Android, AndroidError, JavaClassRef, JavaObject, MmmError, json_default
 from .config import config_path
 
 DEFAULT_UI_PORT = 7358
 SMS_ACTION = "android.provider.Telephony.SMS_RECEIVED"
 SUBSCRIPTION = "mmm-serve"
+#: Non-durable: a battery-low from hours ago is not worth running a command for.
+EVENT_SUBSCRIPTION = "mmm-serve-events"
 LABEL = "lubabs770.mmm.serve"
 MANAGED_ENV = "MMM_SERVE_MANAGED"
 RUNS_KEPT = 1000
@@ -271,6 +274,7 @@ class Daemon:
         threading.Thread(target=self.httpd.serve_forever, name="mmm-http", daemon=True).start()
         events = self.android.events()
         self.android.subscribe([SMS_ACTION], name=SUBSCRIPTION, durable=True)
+        self._subscribe_events()
         threading.Thread(target=self._event_loop, args=(events,), name="mmm-sms", daemon=True).start()
         threading.Thread(target=self._ping_loop, name="mmm-ping", daemon=True).start()
         if self.write_info:
@@ -324,12 +328,35 @@ class Daemon:
         for event in events:
             if self._stop.is_set():
                 return
-            if event.sub != SUBSCRIPTION:
-                continue
             try:
-                self.handle_sms_event(event.event_id, event.payload)
+                if event.sub == SUBSCRIPTION:
+                    self.handle_sms_event(event.event_id, event.payload)
+                elif event.sub == EVENT_SUBSCRIPTION:
+                    self.handle_rule_event(event.payload)
             except Exception:
                 log.exception("could not handle event %s", event.event_id)
+
+    def handle_rule_event(self, payload: Any) -> None:
+        """A non-SMS broadcast: run every rule listening for it, the intent as JSON on stdin."""
+        action = str((payload or {}).get("action") or "") if isinstance(payload, dict) else ""
+        matched = rules_module.for_action(self.rules, action)
+        if not matched:
+            return
+        text = json.dumps(payload, default=json_default)
+        self.broadcast("event", {"action": action, "rules": [r.event for r in matched]})
+        for rule in matched:
+            self._pool.submit(self._run_rule, rule, "", text)
+
+    def _subscribe_events(self) -> None:
+        """(Re)registers the one subscription that carries every event rule's action."""
+        actions = rules_module.event_actions(self.rules)
+        try:
+            self.android.unsubscribe(EVENT_SUBSCRIPTION)
+        except MmmError:
+            pass  # nothing registered yet
+        if actions:
+            self.android.subscribe(actions, name=EVENT_SUBSCRIPTION)
+            log.info("event rules listen for %s", ", ".join(actions))
 
     def handle_sms_event(self, event_id: int, payload: dict) -> None:
         # The id is stored before the rule runs: a crash costs one run, never a repeat.
@@ -368,7 +395,7 @@ class Daemon:
             "ts": int(time.time() * 1000),
             "sender": sender,
             "trigger": rules_module.first_word(text),
-            "rule": rule.trigger,
+            "rule": rule.trigger if rule.event == rules_module.SMS else rule.event,
             "blocked": blocked,
             "test": test,
             "exit": None if result is None else result.exit,
@@ -389,11 +416,11 @@ class Daemon:
         self.broadcast("run", entry)
         return entry
 
-    def test_rule(self, trigger: str, text: str, sender: str) -> dict:
-        """Runs a rule exactly as an SMS would, but never replies."""
-        rule = next((r for r in self.rules if r.trigger == trigger), None)
+    def test_rule(self, trigger: str, text: str, sender: str, event: str = rules_module.SMS) -> dict:
+        """Runs a rule exactly as its event would, but never replies."""
+        rule = next((r for r in self.rules if r.event == event and (event != rules_module.SMS or r.trigger == trigger)), None)
         if rule is None:
-            raise ValueError(f"no rule {trigger!r}")
+            raise ValueError(f"no rule {trigger!r}" if event == rules_module.SMS else f"no rule for {event!r}")
         return self._record(rule, sender, text, rules_module.run(rule, text, sender), test=True)
 
     def _ping_loop(self) -> None:
@@ -421,6 +448,10 @@ class Daemon:
         parsed = rules_module.parse(data)
         rules_module.save(parsed, self.rules_file)
         self.rules = parsed
+        try:
+            self._subscribe_events()
+        except MmmError as error:
+            log.warning("could not update event subscriptions: %s", error)
         return parsed
 
     def _load_runs(self) -> None:
@@ -481,6 +512,16 @@ class Daemon:
             "last_run": self.runs[-1] if self.runs else None,
             "log": tail,
         }
+
+    def tailnet_status(self) -> dict | None:
+        """``tailscale ping`` from this computer to the phone, when the profile is tailnet."""
+        profile = self.android.profile
+        if profile.transport != "tailnet" or not _which("tailscale"):
+            return None
+        done = subprocess.run(["tailscale", "ping", "-c", "1", "--timeout", "3s", profile.host],
+                              capture_output=True, text=True)
+        lines = (done.stdout or done.stderr).strip().splitlines()
+        return {"host": profile.host, "ok": done.returncode == 0, "reply": lines[-1] if lines else ""}
 
     def set_login(self, on: bool) -> dict:
         """Hands the daemon over to launchd/systemd, or back to a plain process."""
@@ -577,6 +618,10 @@ class HttpError(Exception):
     def __init__(self, status: int, message: str, kind: str = "error") -> None:
         super().__init__(message)
         self.status, self.kind = status, kind
+
+
+def _limit(query: dict, default: int) -> int:
+    return max(1, min(int((query.get("limit") or [str(default)])[0]), 1000))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -734,6 +779,37 @@ class Handler(BaseHTTPRequestHandler):
                 return settings.read(d.android, match.group(1))
             body = self._body()
             return {"ok": settings.write(d.android, match.group(1), str(body["name"]), str(body["value"]))}
+        if path == "/api/mms" and method == "POST":
+            body = self._body()
+            to = str(body.get("to") or "").strip()
+            try:
+                image = base64.b64decode(str(body.get("image") or ""), validate=True)
+            except ValueError as error:
+                raise HttpError(400, f"image is not base64: {error}") from error
+            if not to or not image:
+                raise HttpError(400, "to and image are both required")
+            sms.send_mms(d.android, to, image, str(body.get("name") or "image.jpg"),
+                         str(body.get("mime") or "image/jpeg"), str(body.get("caption") or ""))
+            return {"sent": True}
+        if path == "/api/apps":
+            if method == "GET":
+                return apps.installed(d.android)
+            body = self._body()
+            return {"output": apps.set_enabled(d.android, str(body.get("package") or ""), bool(body.get("enabled")))}
+        if (method, path) == ("GET", "/api/network"):
+            return {"wifi": network.wifi(d.android), "tailnet": d.tailnet_status()}
+        if (method, path) == ("GET", "/api/calls"):
+            return d.to_page(calls.log(d.android, _limit(query, 100)))
+        if (method, path) == ("GET", "/api/contacts"):
+            return d.to_page(calls.contacts(d.android, (query.get("q") or [""])[0], _limit(query, 100)))
+        if path == "/api/notifications":
+            if method == "GET":
+                return notifications.active(d.android)
+            body = self._body()
+            title, text = str(body.get("title") or "").strip(), str(body.get("text") or "")
+            if not title:
+                raise HttpError(400, "title is required")
+            return {"id": notifications.post(d.android, title, text)}
         if path == "/api/rules":
             if method == "PUT":
                 body = self._body()
@@ -744,11 +820,12 @@ class Handler(BaseHTTPRequestHandler):
                         raw["command"] = shlex.split(raw["command"])
                 d.save_rules(body)
             return {"rules": [dict(vars(r), command_line=shlex.join(r.command)) for r in d.rules],
-                    "path": _tilde(d.rules_file)}
+                    "path": _tilde(d.rules_file), "events": rules_module.EVENTS}
         if (method, path) == ("POST", "/api/rules/test"):
             body = self._body()
-            return d.test_rule(str(body["trigger"]), str(body.get("text") or ""),
-                               str(body.get("sender") or "+15550100000"))
+            return d.test_rule(str(body.get("trigger") or "*"), str(body.get("text") or ""),
+                               str(body.get("sender") or "+15550100000"),
+                               str(body.get("event") or rules_module.SMS))
         if (method, path) == ("GET", "/api/runs"):
             limit = max(1, min(int((query.get("limit") or ["100"])[0]), RUNS_KEPT))
             return list(d.runs)[-limit:][::-1]

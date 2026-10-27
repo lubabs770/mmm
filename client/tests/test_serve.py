@@ -43,6 +43,8 @@ def phone(server: FakeServer, request: dict):
         return result(request, server.sms_body)
     if method == "getContentResolver":
         return result(request, {"$h": 600, "cls": "android.content.ContentResolver"})
+    if method == "run":  # Root.run(command, timeoutMs), expanded
+        return result(request, {"ok": True, "code": 0, "output": server.shell_output})
     if method == "makeThing":
         return result(request, {"$h": 700, "cls": "com.example.Thing"})
     if method == "useThing":
@@ -55,6 +57,7 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setenv("MMM_CONFIG", str(tmp_path / "config.toml"))
     server = FakeServer(phone)
     server.sms_body = "dump hello"
+    server.shell_output = ""
     android = Android(
         Profile(name="test", token=server.token, transport="local", host="127.0.0.1", port=server.port),
         reconnect=False,
@@ -267,3 +270,35 @@ def test_the_rules_path_is_shown_with_a_tilde(setup, monkeypatch):
     assert serve._tilde(Path("/home/someone/.config/mmm/rules.json")) == "~/.config/mmm/rules.json"
     assert serve._tilde(Path("/home/someoneelse/rules.json")) == "/home/someoneelse/rules.json"
     assert serve._tilde(Path("/etc/rules.json")) == "/etc/rules.json"
+
+
+def test_an_event_rule_runs_on_its_broadcast_with_the_intent_on_stdin(setup):
+    server, daemon, tmp = setup
+    marker = tmp / "event.json"
+    script = f"import os, sys; open({str(marker)!r}, 'w').write(os.environ['MMM_EVENT'] + ' ' + sys.stdin.read())"
+    status, body = request(daemon, "PUT", "/api/rules", {"rules": [
+        {"trigger": "*", "event": "battery-low", "command": [sys.executable, "-c", script]}]})
+    assert status == 200 and body["rules"][0]["event"] == "battery-low"
+    subscribed = [r for r in server.sent("subscribe") if r.get("name") == "mmm-serve-events"]
+    assert subscribed and subscribed[-1]["action"] == ["android.intent.action.BATTERY_LOW"]
+
+    server.event("mmm-serve-events", {"action": "android.intent.action.BATTERY_LOW", "extras": {}})
+    assert wait_for(lambda: marker.exists() and marker.read_text())
+    name, payload = marker.read_text().split(" ", 1)
+    assert name == "battery-low" and json.loads(payload)["action"] == "android.intent.action.BATTERY_LOW"
+    assert wait_for(lambda: daemon.runs and daemon.runs[-1]["rule"] == "battery-low")
+
+
+def test_apps_are_listed_and_a_bad_package_is_refused(setup):
+    server, daemon, _ = setup
+    server.shell_output = "package:com.a\npackage:com.b\n@\npackage:com.a\n@\npackage:com.b"
+    status, rows = request(daemon, "GET", "/api/apps")
+    assert status == 200 and rows == [{"package": "com.a", "system": True, "enabled": True},
+                                      {"package": "com.b", "system": False, "enabled": False}]
+    assert request(daemon, "POST", "/api/apps", {"package": "com.a; reboot", "enabled": False})[0] == 400
+
+
+def test_mms_wants_an_image(setup):
+    _, daemon, _ = setup
+    assert request(daemon, "POST", "/api/mms", {"to": SENDER, "image": ""})[0] == 400
+    assert request(daemon, "POST", "/api/mms", {"to": SENDER, "image": "not base64!"})[0] == 400

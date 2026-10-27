@@ -1,6 +1,7 @@
-"""Rules: an incoming SMS whose first word is a trigger runs a command here.
+"""Rules: an incoming SMS whose first word is a trigger runs a command here, and so
+can any other broadcast the phone sees (a call, low battery, power, Wi-Fi).
 
-A rule maps a trigger word to an argv. The message never becomes part of that
+A rule maps a trigger word (for ``sms``) or an event to an argv. The message never becomes part of that
 argv and no shell is involved: the command reads the text from stdin or from the
 ``MMM_*`` environment variables, so nothing a sender types can be executed.
 """
@@ -19,6 +20,17 @@ from typing import Any
 from .config import config_path
 
 CATCH_ALL = "*"
+SMS = "sms"
+#: Friendly names for broadcasts worth a rule. Any other action string works too.
+EVENTS = {
+    SMS: "android.provider.Telephony.SMS_RECEIVED",
+    "call": "android.intent.action.PHONE_STATE",
+    "battery-low": "android.intent.action.BATTERY_LOW",
+    "battery-okay": "android.intent.action.BATTERY_OKAY",
+    "power-connected": "android.intent.action.ACTION_POWER_CONNECTED",
+    "power-disconnected": "android.intent.action.ACTION_POWER_DISCONNECTED",
+    "wifi": "android.net.wifi.STATE_CHANGE",
+}
 #: One SMS: 160 GSM-7 characters, or 70 once anything outside ASCII forces UCS-2.
 SMS_GSM = 160
 SMS_UCS2 = 70
@@ -39,6 +51,12 @@ class Rule:
     reply: bool = False
     timeout: int = 60
     enabled: bool = True
+    event: str = SMS
+
+    @property
+    def action(self) -> str:
+        """The broadcast action this rule listens for."""
+        return EVENTS.get(self.event, self.event)
 
     @classmethod
     def from_json(cls, raw: dict) -> "Rule":
@@ -52,6 +70,7 @@ class Rule:
             reply=bool(raw.get("reply", False)),
             timeout=max(1, min(int(raw.get("timeout", 60)), 3600)),
             enabled=bool(raw.get("enabled", True)),
+            event=str(raw.get("event") or SMS).strip(),
         )
 
 
@@ -66,13 +85,22 @@ class Result:
 
 def validate(rules: list[Rule]) -> None:
     """Raises ValueError naming the first problem."""
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for rule in rules:
+        if rule.event not in EVENTS and not re.fullmatch(r"[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+", rule.event):
+            raise ValueError(f"event {rule.event!r} must be one of {', '.join(EVENTS)} or a broadcast action")
+        if rule.event != SMS:
+            if rule.trigger not in ("", CATCH_ALL):
+                raise ValueError(f"trigger words only apply to sms rules; leave {rule.event!r} at {CATCH_ALL!r}")
+            if rule.reply:
+                raise ValueError(f"reply only works for sms rules; {rule.event!r} has no sender to answer")
+            rule.trigger = CATCH_ALL
         if not rule.trigger or (rule.trigger != CATCH_ALL and not re.fullmatch(r"\S+", rule.trigger)):
             raise ValueError(f"trigger {rule.trigger!r} must be one word, or {CATCH_ALL!r}")
-        if rule.trigger in seen:
-            raise ValueError(f"trigger {rule.trigger!r} is used twice")
-        seen.add(rule.trigger)
+        if (rule.event, rule.trigger) in seen:
+            what = f"trigger {rule.trigger!r}" if rule.event == SMS else f"event {rule.event!r}"
+            raise ValueError(f"{what} is used twice")
+        seen.add((rule.event, rule.trigger))
         if not rule.command or not rule.command[0].strip():
             raise ValueError(f"rule {rule.trigger!r} has no command")
 
@@ -115,6 +143,16 @@ def _digits(number: str) -> str:
     return re.sub(r"\D", "", number)[-10:]
 
 
+def for_action(rules: list[Rule], action: str) -> list[Rule]:
+    """The enabled non-SMS rules listening for this broadcast action."""
+    return [r for r in rules if r.enabled and r.event != SMS and r.action == action]
+
+
+def event_actions(rules: list[Rule]) -> list[str]:
+    """Every broadcast action the enabled non-SMS rules need a subscription for."""
+    return sorted({r.action for r in rules if r.enabled and r.event != SMS})
+
+
 def sender_allowed(rule: Rule, sender: str) -> bool:
     if not rule.senders:
         return True
@@ -129,7 +167,7 @@ def match(rules: list[Rule], text: str) -> Rule | None:
     logged as blocked rather than vanishing.
     """
     word = first_word(text)
-    live = [r for r in rules if r.enabled]
+    live = [r for r in rules if r.enabled and r.event == SMS]
     for rule in live:
         if rule.trigger == word:
             return rule
@@ -146,6 +184,7 @@ def environment(text: str, sender: str, rule: Rule) -> dict[str, str]:
         MMM_SENDER=sender,
         MMM_TRIGGER=first_word(text),
         MMM_ARGS=rest(text) if rule.trigger != CATCH_ALL else text,
+        MMM_EVENT=rule.event,
     )
     return env
 

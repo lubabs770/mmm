@@ -30,3 +30,60 @@ def test_mms_pdu_without_caption_has_one_part():
 def test_mms_pdu_rejects_unknown_type():
     with pytest.raises(ValueError):
         mms_pdu("+15550100199", b"x", "a.webp", "image/webp")
+
+
+# ----------------------------------------------------------- apps, network, notifications
+
+from mmm.android import apps, network, notifications  # noqa: E402
+
+
+def test_pm_lists_become_rows():
+    out = "package:com.a\npackage:com.b\npackage:com.c\n@\npackage:com.a\n@\npackage:com.c"
+    assert apps.parse_pm_lists(out) == [
+        {"package": "com.a", "system": True, "enabled": True},
+        {"package": "com.b", "system": False, "enabled": True},
+        {"package": "com.c", "system": False, "enabled": False},
+    ]
+
+
+@pytest.mark.parametrize("bad", ["", "com", "com.a; reboot", "com.a b", "$(id).x", "-f.x"])
+def test_set_enabled_refuses_anything_but_a_package_name(bad):
+    with pytest.raises(ValueError):
+        apps.set_enabled(None, bad, True)  # validated before the phone is touched
+
+
+def test_set_enabled_will_not_cut_its_own_link():
+    with pytest.raises(ValueError):
+        apps.set_enabled(None, "com.tailscale.ipn", False)
+
+
+def test_wifi_status_and_saved_networks():
+    status = ('Wifi is enabled\nWifi is connected to "Home Net"\n'
+              "WifiInfo: SSID: Home Net, RSSI: -39, Link speed: 65Mbps, Tx Link speed: 65Mbps")
+    assert network.parse_wifi_status(status) == {"enabled": True, "ssid": "Home Net", "rssi": -39, "link_mbps": 65}
+    assert network.parse_wifi_status("Wifi is disabled")["ssid"] is None
+    saved = "Network Id      SSID                         Security type\n2            Starbucks WiFi                   open\n4            MyOptimum 82dbef                 wpa2"
+    assert network.parse_saved_networks(saved) == [
+        {"id": 2, "ssid": "Starbucks WiFi", "security": "open"},
+        {"id": 4, "ssid": "MyOptimum 82dbef", "security": "wpa2"},
+    ]
+
+
+def test_dumpsys_notifications_are_parsed_and_deduplicated():
+    dump = """
+    NotificationRecord(0x0a8: pkg=com.whatsapp user=UserHandle{0} id=1 tag=null importance=2
+          android.title=String (Family)
+          android.text=String (Leah added you)
+          android.title=String (ignored second title)
+    NotificationRecord(0x05e: pkg=com.android.systemui user=UserHandle{-1} id=3
+          android.title=String (Battery is low)
+          android.text=String (9% remaining)
+    NotificationRecord(0x0ff: pkg=com.whatsapp user=UserHandle{0} id=1 tag=null
+          android.title=String (Family)
+          android.text=String (Leah added you)
+    NotificationRecord(0x099: pkg=com.silent user=UserHandle{0} id=9
+"""
+    assert notifications.parse_dumpsys(dump) == [
+        {"package": "com.whatsapp", "title": "Family", "text": "Leah added you"},
+        {"package": "com.android.systemui", "title": "Battery is low", "text": "9% remaining"},
+    ]
