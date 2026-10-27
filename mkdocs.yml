@@ -50,5 +50,6 @@ nav:
   - Protocol: protocol.md
   - Recipes: recipes.md
   - MCP: mcp.md
+  - Web UI and rules: ui.md
   - Security model: security.md
   - Design spec: spec.md

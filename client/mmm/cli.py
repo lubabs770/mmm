@@ -6,6 +6,8 @@
     mmm watch android.provider.Telephony.SMS_RECEIVED --durable sms
     mmm repl
     mmm mcp
+    mmm serve
+    mmm ui
 """
 
 from __future__ import annotations
@@ -77,6 +79,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     repl = subparsers.add_parser("repl", help="Python prompt with `a` already connected")
     repl.set_defaults(handler=cmd_repl)
+
+    serve = subparsers.add_parser("serve", help="run the daemon: rules for incoming SMS and the web UI")
+    serve.add_argument("--port", type=int, default=7358, help="UI port on 127.0.0.1 (default 7358)")
+    serve.set_defaults(handler=cmd_serve)
+
+    ui = subparsers.add_parser("ui", help="open the web UI, starting the daemon if needed")
+    ui.add_argument("--port", type=int, default=7358, help="UI port if the daemon has to be started")
+    ui.add_argument("--no-open", action="store_true", help="print the URL instead of opening it")
+    ui.set_defaults(handler=cmd_ui)
 
     mcp = subparsers.add_parser("mcp", help="run as an MCP server on stdio")
     mcp.set_defaults(handler=cmd_mcp)
@@ -192,6 +203,18 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp import serve
 
     return serve(profile=args.profile)
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .serve import serve
+
+    return serve(args.profile, args.port)
+
+
+def cmd_ui(args: argparse.Namespace) -> int:
+    from .serve import open_ui
+
+    return open_ui(args.profile, args.port, open_browser=not args.no_open)
 
 
 # ------------------------------------------------------------------ helpers
