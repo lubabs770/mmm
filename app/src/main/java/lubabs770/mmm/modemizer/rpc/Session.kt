@@ -311,7 +311,8 @@ class Session(
                 }
             }
             val durable = request.optBoolean("durable", false)
-            events.subscribe(this, caller.id, name, actions, durable)
+            val types = request.optJSONArray("types")?.let { t -> (0 until t.length()).map { t.getString(it) } }.orEmpty()
+            events.subscribe(this, caller.id, name, actions, durable, types)
             // Live events wait in the backlog until it has been replayed, so nothing
             // newer can overtake something older. Drain until the backlog is empty;
             // only then does the hub attach this session for live delivery.

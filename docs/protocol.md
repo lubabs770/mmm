@@ -48,7 +48,7 @@ A wrong or revoked token gets an `unauthorized` error and the connection closes.
 | `expand` | `target`, `$expand` | a JSON snapshot of the target |
 | `release` | `handles` | how many existed |
 | `proxy` | `interfaces` | handle to the proxy, plus `sub` |
-| `subscribe` | `name`, `action`, `durable?` | `{subscribed, durable, replayed}` |
+| `subscribe` | `name`, `action`, `durable?`, `types?` | `{subscribed, durable, replayed}` |
 | `unsubscribe` | `name` | `true` if it existed |
 | `reply` | `event_id`, `value` | `true` |
 
@@ -146,6 +146,10 @@ to 4 kB.
 {"op":"subscribe","id":5,"name":"sms","durable":true,
  "action":["android.provider.Telephony.SMS_RECEIVED"]}
 ```
+
+`types` (app 0.2.3+) adds MIME data types to the filter. A broadcast that carries a
+type never matches a filter without one, so WAP push needs it:
+`"action":["android.provider.Telephony.WAP_PUSH_RECEIVED"],"types":["application/vnd.wap.mms-message"]`.
 
 A subscription is named by the client and owned by its token, so two clients can use
 the same name. Subscribing again with the same name re-attaches it and replays

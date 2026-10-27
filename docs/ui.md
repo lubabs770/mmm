@@ -63,6 +63,15 @@ the Rules page; changes apply at once.
 | `enabled` | `true` | Off keeps the rule without running it |
 | `event` | `sms` | What fires it: `sms`, `call`, `battery-low`, `battery-okay`, `power-connected`, `power-disconnected`, `wifi`, or any broadcast action |
 
+### Pictures (MMS)
+
+An MMS runs the same rules as a text: its caption is the text, and `MMM_MEDIA`
+lists the pictures (one path per line), saved under `~/.local/state/mmm/mms` and
+kept 30 days. `mmm serve` downloads the message itself through the platform
+MmsService rather than waiting for the phone's messaging app, so it works even
+where that app cannot fetch MMS. Needs app 0.2.3 or later (typed subscriptions)
+and root.
+
 ### Rules for other events
 
 A rule whose `event` is not `sms` runs when the phone sees that broadcast. Its

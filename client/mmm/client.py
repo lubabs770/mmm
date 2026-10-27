@@ -180,11 +180,13 @@ class Android:
             # Durable subscriptions replay their backlog on resubscribe, so an SMS
             # that arrived while the link was down still gets delivered.
             for name, spec in list(self._subscriptions.items()):
+                extra = {"types": spec["types"]} if spec.get("types") else {}
                 self._request(
                     "subscribe",
                     name=name,
                     action=spec["actions"],
                     durable=spec["durable"],
+                    **extra,
                 )
 
     def close(self) -> None:
@@ -340,18 +342,25 @@ class Android:
         name: str | None = None,
         durable: bool | str = False,
         handler: Callable[[Any], None] | None = None,
+        types: list[str] | None = None,
     ) -> str:
-        """Registers a broadcast subscription and returns its name."""
+        """Registers a broadcast subscription and returns its name.
+
+        [types] are MIME data types to match too: a broadcast that carries one (WAP
+        push, ``application/vnd.wap.mms-message``) never matches a filter without it.
+        Needs app 0.2.3 or later; older apps ignore it.
+        """
         if isinstance(actions, str):
             actions = [actions]
         if isinstance(durable, str):
             name, durable = durable, True
         if not name:
             name = f"sub{next(self._ids)}"
-        self._subscriptions[name] = {"actions": list(actions), "durable": bool(durable)}
+        self._subscriptions[name] = {"actions": list(actions), "durable": bool(durable), "types": list(types or [])}
         if handler is not None:
             self._handlers[name] = handler
-        self._request("subscribe", name=name, action=list(actions), durable=bool(durable))
+        extra = {"types": list(types)} if types else {}
+        self._request("subscribe", name=name, action=list(actions), durable=bool(durable), **extra)
         return name
 
     def unsubscribe(self, name: str) -> bool:

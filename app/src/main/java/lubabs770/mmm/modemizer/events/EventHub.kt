@@ -55,6 +55,8 @@ class EventHub(
         var actions: List<String>,
         val durable: Boolean,
         val backlog: Backlog?,
+        /** MIME data types to match as well, for broadcasts that carry one (WAP push). */
+        var types: List<String> = emptyList(),
     ) {
         var receiver: BroadcastReceiver? = null
         var target: EventTarget? = null
@@ -95,6 +97,7 @@ class EventHub(
         name: String,
         actions: List<String>,
         durable: Boolean,
+        types: List<String> = emptyList(),
     ) {
         require(name.isNotBlank()) { "subscription needs a name" }
         require(actions.isNotEmpty()) { "subscription needs at least one action" }
@@ -108,12 +111,13 @@ class EventHub(
                 sub = null
             }
             if (sub == null) {
-                sub = Sub(name, tokenId, actions, durable, if (durable) newBacklog() else null)
+                sub = Sub(name, tokenId, actions, durable, if (durable) newBacklog() else null, types)
                 register(sub)
                 subs[key] = sub
-            } else if (sub.actions != actions) {
+            } else if (sub.actions != actions || sub.types != types) {
                 unregister(sub)
                 sub.actions = actions
+                sub.types = types
                 register(sub)
             }
             // Non-durable subscriptions have no backlog, so they go live at once.
@@ -220,7 +224,10 @@ class EventHub(
                     (0 until a.length()).map { a.optString(it) }
                 }.orEmpty().filter { it.isNotEmpty() }
                 if (actions.isEmpty()) continue
-                val sub = Sub(name, tokenId, actions, durable = true, backlog = newBacklog())
+                val types = item.optJSONArray("types")?.let { t ->
+                    (0 until t.length()).map { t.optString(it) }
+                }.orEmpty().filter { it.isNotEmpty() }
+                val sub = Sub(name, tokenId, actions, durable = true, backlog = newBacklog(), types = types)
                 item.optJSONArray("backlog")?.let { entries ->
                     val restored = (0 until entries.length()).mapNotNull { idx ->
                         val e = entries.optJSONObject(idx) ?: return@mapNotNull null
@@ -260,7 +267,12 @@ class EventHub(
                 if (intent != null) deliver(sub, intent)
             }
         }
-        val filter = IntentFilter().apply { sub.actions.forEach { addAction(it) } }
+        val filter = IntentFilter().apply {
+            sub.actions.forEach { addAction(it) }
+            // A filter with no types never matches an intent that has one, so WAP push
+            // (typed application/vnd.wap.mms-message) needs its type named here.
+            sub.types.forEach { addDataType(it) }
+        }
         // System broadcasts come from outside the app, so the receiver has to be exported.
         // Delivery writes to a socket and to disk, so it runs on its own thread: on the
         // main thread a client that stops reading would freeze the whole app.
@@ -369,6 +381,7 @@ class EventHub(
                         .put("name", sub.name)
                         .put("tokenId", sub.tokenId)
                         .put("actions", JSONArray(sub.actions))
+                        .put("types", JSONArray(sub.types))
                         .put("backlog", entries)
                 )
             }
