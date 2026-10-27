@@ -216,3 +216,35 @@ def test_a_cursor_dump_parses_into_settings():
         "<<<<<\n"
     )
     assert parse_cursor_dump(dump) == {"screen_brightness": "128", "note": "line one\nline two", "empty": ""}
+
+
+def test_the_login_item_runs_the_pyz_itself_when_started_from_one(tmp_path, monkeypatch):
+    import zipfile
+
+    from mmm import serve
+
+    pyz = tmp_path / "mmm-client.pyz"
+    with zipfile.ZipFile(pyz, "w") as archive:
+        archive.writestr("__main__.py", "")
+    monkeypatch.setattr(sys, "argv", [str(pyz), "ui"])
+    assert serve._serve_argv(7358, "flip") == [sys.executable, str(pyz), "--profile", "flip", "serve", "--port", "7358"]
+    monkeypatch.setattr(sys, "argv", ["/usr/local/bin/mmm", "ui"])
+    assert serve._serve_argv(7358, None)[:3] == [sys.executable, "-m", "mmm.cli"]
+
+
+def test_handing_over_frees_the_port_without_ending_the_wait(setup, monkeypatch):
+    server, daemon, _ = setup
+    from mmm import serve
+
+    calls = []
+    monkeypatch.setattr(serve.subprocess, "run", lambda argv, **kw: calls.append(argv) or
+                        serve.subprocess.CompletedProcess(argv, 0, "", ""))
+    monkeypatch.setattr(serve.os, "_exit", lambda code: calls.append(("exit", code)))
+    monkeypatch.setattr(serve.time, "sleep", lambda s: None)
+    daemon._handover(["launchctl", "bootstrap", "gui/501", "x.plist"])
+    assert calls == [["launchctl", "bootstrap", "gui/501", "x.plist"], ("exit", 0)]
+    # The port is free for the system copy, but wait() was never released early.
+    assert not daemon._stop.is_set()
+    import socket as sock
+    with sock.socket() as probe:
+        probe.bind(("127.0.0.1", daemon.port))
