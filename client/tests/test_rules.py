@@ -108,3 +108,30 @@ def test_save_and_load_round_trip(tmp_path):
     rules.save(table, path)
     assert rules.load(path) == table
     assert rules.load(tmp_path / "missing.json") == []
+
+
+def test_event_rules_take_no_trigger_word_and_no_reply():
+    rules.validate([Rule("", ["x"], event="battery-low")])
+    with pytest.raises(ValueError, match="trigger words only apply"):
+        rules.validate([Rule("hi", ["x"], event="battery-low")])
+    with pytest.raises(ValueError, match="reply only works"):
+        rules.validate([Rule("*", ["x"], event="call", reply=True)])
+    with pytest.raises(ValueError, match="used twice"):
+        rules.validate([Rule("*", ["x"], event="call"), Rule("*", ["y"], event="call")])
+    with pytest.raises(ValueError, match="must be one of"):
+        rules.validate([Rule("*", ["x"], event="not an action")])
+
+
+def test_an_sms_catch_all_and_an_event_rule_live_side_by_side():
+    table = [Rule("*", ["sms"]), Rule("*", ["battery"], event="battery-low"),
+             Rule("*", ["custom"], event="com.example.PING")]
+    rules.validate(table)
+    assert rules.match(table, "hello").command == ["sms"]  # event rules never answer texts
+    assert [r.command for r in rules.for_action(table, "android.intent.action.BATTERY_LOW")] == [["battery"]]
+    assert rules.event_actions(table) == ["android.intent.action.BATTERY_LOW", "com.example.PING"]
+
+
+def test_the_event_name_reaches_the_command():
+    rule = dumper(event="call")
+    out = json.loads(rules.run(rule, '{"action": "x"}', "").stdout)
+    assert out["env"]["MMM_EVENT"] == "call" and out["stdin"] == '{"action": "x"}'

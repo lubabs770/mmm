@@ -178,3 +178,4 @@ td.value { overflow-wrap: anywhere; }
   .threads { max-height: 220px; }
   .rule { grid-template-columns: 1fr; }
 }
+.wide { width: 100%; }

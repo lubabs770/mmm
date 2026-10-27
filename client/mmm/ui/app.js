@@ -124,11 +124,38 @@ function live() {
     if (!r.test) toast(`Rule "${r.rule}" ${r.blocked ? "blocked" : "ran"}`, r.blocked ? `sender ${r.sender} not allowed` : `exit ${r.exit} in ${r.ms} ms`, r.blocked || r.exit !== 0);
     if (current === "rules") loadRuns();
   });
+  es.addEventListener("event", (e) => {
+    const ev = JSON.parse(e.data);
+    toast(`Event ${ev.rules.join(", ")}`, ev.action);
+  });
   es.onopen = () => banner("");
   es.onerror = () => { setLink({ connected: false }); banner("Lost the daemon. Retrying…"); };
 }
 
 // ----------------------------------------------------------------- messages
+
+/** A picture ready for /api/mms. Carriers drop MMS near 1 MB, so anything over
+ * 300 KB (or not JPEG/PNG/GIF) is redrawn as a JPEG at most 1280 px on its long side. */
+async function mmsImage(file) {
+  const keep = ["image/jpeg", "image/png", "image/gif"].includes(file.type) && file.size <= 300 * 1024;
+  let blob = file, name = file.name, mime = file.type;
+  if (!keep) {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    blob = await new Promise((done) => canvas.toBlob(done, "image/jpeg", 0.7));
+    name = name.replace(/\.[^.]*$/, "") + ".jpg";
+    mime = "image/jpeg";
+  }
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return { b64: btoa(binary), name, mime, size: bytes.length };
+}
+
 
 let openThread = null;
 
@@ -156,10 +183,22 @@ views.messages = async (keep) => {
     const t = threads.get(openThread);
     const to = h("input", { type: "text", placeholder: "Phone number", value: t ? t.address : "" });
     const text = h("textarea", { placeholder: "Text message", rows: 1 });
+    let picture = null;
+    const chosen = h("span", { class: "muted" });
+    const file = h("input", { type: "file", accept: "image/*", hidden: true, onchange: async () => {
+      picture = file.files[0] ? await guard(() => mmsImage(file.files[0])) : null;
+      chosen.textContent = picture ? `${picture.name} · ${Math.round(picture.size / 1024)} KB` : "";
+    } });
     const send = async () => {
-      if (!text.value.trim() || !to.value.trim()) return;
-      const ok = await guard(() => api("POST", "/api/sms", { to: to.value.trim(), body: text.value }));
-      if (ok) { toast("Sent", text.value); text.value = ""; openThread = digits(to.value); setTimeout(() => views.messages(true), 1200); }
+      if (!to.value.trim() || (!text.value.trim() && !picture)) return;
+      const ok = picture
+        ? await guard(() => api("POST", "/api/mms", { to: to.value.trim(), image: picture.b64, name: picture.name, mime: picture.mime, caption: text.value }))
+        : await guard(() => api("POST", "/api/sms", { to: to.value.trim(), body: text.value }));
+      if (ok) {
+        toast(picture ? "Picture sent" : "Sent", text.value || picture.name);
+        text.value = ""; picture = null; file.value = ""; chosen.textContent = "";
+        openThread = digits(to.value); setTimeout(() => views.messages(true), 1200);
+      }
     };
     text.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
     const bubbles = h("div", { class: "bubbles" },
@@ -168,7 +207,10 @@ views.messages = async (keep) => {
     convo.replaceChildren(
       h("div", { class: "row" }, h("h2", {}, t ? t.address : "New message")),
       bubbles,
-      h("div", { class: "compose" }, t ? null : to, text, h("button", { class: "btn primary", onclick: send }, "Send")));
+      h("div", { class: "compose" }, t ? null : to, text, file,
+        h("button", { class: "btn", title: "Attach a picture (sent as MMS)", onclick: () => file.click() }, "Picture"),
+        h("button", { class: "btn primary", onclick: send }, "Send")),
+      chosen);
     if (t) to.hidden = true;
     // After the view is in the DOM, or there is no height to scroll yet.
     requestAnimationFrame(() => { bubbles.scrollTop = bubbles.scrollHeight; });
@@ -185,6 +227,7 @@ views.rules = async () => {
   const data = await guard(() => api("GET", "/api/rules"));
   if (!data || current !== "rules") return;
   rulesState = data.rules.map((r) => ({ ...r, senders: r.senders.join(", ") }));
+  const events = data.events || { sms: "" };
   const list = h("div", { class: "stack" });
   const runs = h("div", { id: "runs" });
 
@@ -194,7 +237,9 @@ views.rules = async () => {
     const bind = (key, el, prop = "value") => { el.addEventListener("input", () => { r[key] = prop === "checked" ? el.checked : el.value; }); return el; };
     return card(null,
       h("div", { class: "rule" },
-        h("label", {}, "Trigger"), bind("trigger", h("input", { type: "text", value: r.trigger, placeholder: "word, or * for anything else" })),
+        h("label", {}, "Event"), bind("event", h("select", {}, [...new Set([...Object.keys(events), r.event || "sms"])].map((e) =>
+          h("option", { value: e, selected: e === (r.event || "sms") }, events[e] ? `${e}` : `${e} (custom action)`)))),
+        h("label", {}, "Trigger"), bind("trigger", h("input", { type: "text", value: r.trigger, placeholder: "word, or * for anything else (sms only)" })),
         h("label", {}, "Command"), bind("command_line", h("input", { type: "text", class: "mono", value: r.command_line, placeholder: "/path/to/script --flag" })),
         h("label", {}, "Senders"), bind("senders", h("input", { type: "text", value: r.senders, placeholder: "empty = anyone" })),
         h("label", {}, "Timeout (s)"), bind("timeout", h("input", { type: "number", min: 1, max: 3600, value: r.timeout })),
@@ -202,7 +247,7 @@ views.rules = async () => {
         h("label", {}, "Enabled"), toggle(r.enabled, (v) => { r.enabled = v; })),
       h("div", { class: "row" }, sample,
         h("button", { class: "btn", onclick: async () => {
-          const res = await guard(() => api("POST", "/api/rules/test", { trigger: r.trigger, text: sample.value || r.trigger }));
+          const res = await guard(() => api("POST", "/api/rules/test", { trigger: r.trigger, event: r.event || "sms", text: sample.value || r.trigger }));
           if (res) { out.hidden = false; out.textContent = `exit ${res.exit}${res.timed_out ? " (timed out)" : ""} · ${res.ms} ms\n${res.stdout}${res.stderr ? "\n--- stderr ---\n" + res.stderr : ""}`; }
         } }, "Test (no reply)"),
         h("button", { class: "btn danger", onclick: () => { rulesState.splice(i, 1); draw(); } }, "Delete")),
@@ -213,7 +258,7 @@ views.rules = async () => {
 
   const save = async () => {
     const body = { rules: rulesState.map((r) => ({
-      trigger: r.trigger, command: r.command_line, reply: r.reply, enabled: r.enabled,
+      trigger: r.trigger, event: r.event || "sms", command: r.command_line, reply: r.reply, enabled: r.enabled,
       timeout: Number(r.timeout) || 60,
       senders: String(r.senders || "").split(",").map((s) => s.trim()).filter(Boolean),
     })) };
@@ -224,9 +269,9 @@ views.rules = async () => {
   main.replaceChildren(
     h("div", { class: "row spread" }, h("h1", {}, "Rules"),
       h("div", { class: "row" },
-        h("button", { class: "btn", onclick: () => { rulesState.push({ trigger: "", command_line: "", senders: "", reply: false, timeout: 60, enabled: true }); draw(); } }, "Add rule"),
+        h("button", { class: "btn", onclick: () => { rulesState.push({ trigger: "", event: "sms", command_line: "", senders: "", reply: false, timeout: 60, enabled: true }); draw(); } }, "Add rule"),
         h("button", { class: "btn primary", onclick: save }, "Save"))),
-    h("p", { class: "muted" }, "When a text's first word matches a trigger, its command runs on this computer. The message reaches the command on stdin and in MMM_TEXT, MMM_ARGS, MMM_SENDER and MMM_TRIGGER, never as arguments or through a shell, so $VARS in a command stay literal. To use one, let sh read it from the environment: ", h("span", { class: "mono" }, `sh -c 'say "$MMM_ARGS"'`), ". Saved to ", h("span", { class: "mono" }, data.path)),
+    h("p", { class: "muted" }, "When a text's first word matches a trigger, its command runs on this computer. Other events (a call, low battery, power, Wi-Fi, or any broadcast action) run theirs with the intent as JSON on stdin and MMM_EVENT set. The message reaches the command on stdin and in MMM_TEXT, MMM_ARGS, MMM_SENDER and MMM_TRIGGER, never as arguments or through a shell, so $VARS in a command stay literal. To use one, let sh read it from the environment: ", h("span", { class: "mono" }, `sh -c 'say "$MMM_ARGS"'`), ". Saved to ", h("span", { class: "mono" }, data.path)),
     list,
     h("h2", {}, "Recent runs"), runs);
   loadRuns();
@@ -263,6 +308,128 @@ views.phone = async () => {
       card("Network", kv([["Mobile data", s.dataEnabled == null ? "—" : (s.dataEnabled ? "on" : "off")], ["SIM state", s.simState], ["Phone permission", s.phoneStatePermission ? "granted" : "missing"]])),
       card("System", kv([["Android", `${s.androidRelease} (API ${s.sdkInt})`], ["Root", i.root ? "yes" : "no"], ["Priv-app", i.priv_app ? "yes" : "no"]])),
       card("MMM", kv([["Version", i.version], ["Port", i.port], ["Tailnet", i.tailnet || "off"], ["Clients", i.clients]]))));
+};
+
+// -------------------------------------------------------------------- calls
+
+const CALL_TYPES = { 1: "incoming", 2: "outgoing", 3: "missed", 4: "voicemail", 5: "rejected", 6: "blocked" };
+const fmtDuration = (s) => (s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`);
+
+views.calls = async () => {
+  const rows = await guard(() => api("GET", "/api/calls?limit=200"));
+  if (!rows || current !== "calls") return;
+  const search = h("input", { type: "search", class: "wide", placeholder: "Search contacts by name or number" });
+  const found = h("div");
+  const lookup = async () => {
+    const q = search.value.trim();
+    if (!q) { found.replaceChildren(); return; }
+    const hits = await guard(() => api("GET", `/api/contacts?q=${encodeURIComponent(q)}&limit=50`));
+    if (!hits || search.value.trim() !== q) return;
+    found.replaceChildren(hits.length ? h("table", {}, hits.map((c) =>
+      h("tr", {}, h("td", {}, c.display_name), h("td", { class: "mono" }, c.data1))))
+      : h("p", { class: "muted" }, "No contact matches."));
+  };
+  let timer = null;
+  search.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(lookup, 300); });
+  main.replaceChildren(
+    h("div", { class: "row spread" }, h("h1", {}, "Calls"), h("button", { class: "btn", onclick: () => show("calls") }, "Refresh")),
+    card("Contacts", search, found),
+    card("Call log", rows.length ? h("table", {},
+      h("tr", {}, ["When", "Who", "Type", "Length"].map((t) => h("th", {}, t))),
+      rows.map((c) => h("tr", {},
+        h("td", {}, fmtTime(c.date)),
+        h("td", {}, c.name || h("span", { class: "mono" }, c.number)),
+        h("td", { class: Number(c.type) === 3 ? "bad" : "" }, CALL_TYPES[c.type] || c.type),
+        h("td", {}, fmtDuration(Number(c.duration) || 0)))))
+      : h("p", { class: "muted" }, "No calls.")));
+};
+
+// ------------------------------------------------------------ notifications
+
+views.notifications = async () => {
+  const title = h("input", { type: "text", placeholder: "Title" });
+  const text = h("input", { type: "text", placeholder: "Text" });
+  const list = h("div");
+  const draw = async () => {
+    const rows = await guard(() => api("GET", "/api/notifications"));
+    if (!rows || current !== "notifications") return;
+    list.replaceChildren(rows.length ? h("table", {},
+      h("tr", {}, ["App", "Title", "Text"].map((t) => h("th", {}, t))),
+      rows.map((n) => h("tr", {}, h("td", { class: "mono" }, n.package), h("td", {}, n.title), h("td", { class: "value" }, n.text))))
+      : h("p", { class: "muted" }, "No notifications."));
+  };
+  const post = async () => {
+    if (!title.value.trim()) return;
+    const res = await guard(() => api("POST", "/api/notifications", { title: title.value, text: text.value }));
+    if (res) { toast("Posted", title.value); title.value = text.value = ""; setTimeout(draw, 800); }
+  };
+  main.replaceChildren(
+    h("div", { class: "row spread" }, h("h1", {}, "Notifications"), h("button", { class: "btn", onclick: draw }, "Refresh")),
+    card("Post one on the phone", h("div", { class: "row" }, title, text, h("button", { class: "btn primary", onclick: post }, "Post"))),
+    card("On the phone now", h("p", { class: "muted" }, "Every app's notifications, read through dumpsys (needs root). Refreshes every 15 s."), list));
+  await draw();
+  refreshTimer = setInterval(draw, 15000);
+};
+
+// --------------------------------------------------------------------- apps
+
+let appsFilter = "user";
+
+views.apps = async () => {
+  const rows = await guard(() => api("GET", "/api/apps"));
+  if (!rows || current !== "apps") return;
+  const filters = {
+    user: (p) => !p.system, system: (p) => p.system, disabled: (p) => !p.enabled, all: () => true,
+  };
+  const search = h("input", { type: "search", placeholder: `Search ${rows.length} packages` });
+  const body = h("tbody");
+  const draw = () => {
+    const q = search.value.toLowerCase();
+    body.replaceChildren(...rows.filter(filters[appsFilter]).filter((p) => !q || p.package.toLowerCase().includes(q)).map((p) =>
+      h("tr", {},
+        h("td", { class: "mono" }, p.package),
+        h("td", { class: "muted" }, p.system ? "system" : "user"),
+        h("td", {}, toggle(p.enabled, async (on, el) => {
+          el.disabled = true;
+          const res = await guard(() => api("POST", "/api/apps", { package: p.package, enabled: on }));
+          el.disabled = false;
+          if (res) { p.enabled = on; toast(on ? "Enabled" : "Disabled", p.package); }
+          else el.checked = !on;
+        })))));
+  };
+  search.addEventListener("input", draw);
+  draw();
+  main.replaceChildren(
+    h("div", { class: "row spread" }, h("h1", {}, "Apps"), h("button", { class: "btn", onclick: () => show("apps") }, "Refresh")),
+    h("div", { class: "row spread" },
+      h("div", { class: "tabs", role: "tablist" }, Object.keys(filters).map((f) =>
+        h("button", { role: "tab", "aria-selected": String(f === appsFilter), onclick: () => { appsFilter = f; show("apps"); } },
+          `${f} (${rows.filter(filters[f]).length})`))),
+      search),
+    h("p", { class: "muted" }, "Off runs pm disable-user: the app stays installed and comes back with one switch. Needs root. MMM and Tailscale can't be turned off from here, since this page reaches the phone through them."),
+    card(null, h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Package"), h("th", {}, "Kind"), h("th", {}, "Enabled"))), body)));
+};
+
+// ------------------------------------------------------------------ network
+
+views.network = async () => {
+  const data = await guard(() => api("GET", "/api/network"));
+  if (!data || current !== "network") return;
+  const w = data.wifi, t = data.tailnet;
+  const strength = w.rssi == null ? "—" : `${w.rssi} dBm (${w.rssi >= -55 ? "strong" : w.rssi >= -70 ? "fair" : "weak"})`;
+  main.replaceChildren(
+    h("div", { class: "row spread" }, h("h1", {}, "Network"), h("button", { class: "btn", onclick: () => show("network") }, "Refresh")),
+    h("div", { class: "grid" },
+      card("Wi-Fi", kv([["Wi-Fi", w.enabled ? "on" : "off"], ["Connected to", w.ssid], ["Signal", strength],
+        ["Link", w.link_mbps == null ? null : `${w.link_mbps} Mbps`], ["IP", w.ip]])),
+      card("Tailnet", t ? kv([["Phone", h("span", { class: "mono" }, t.host)],
+        ["From this computer", h("span", { class: t.ok ? "ok" : "bad" }, t.ok ? "reachable" : "not answering")],
+        ["Ping", h("span", { title: t.reply }, (t.reply.match(/in (\S+)$/) || [])[1] || t.reply)]])
+        : h("p", { class: "muted" }, "This profile does not use the tailnet, or tailscale is not installed here."))),
+    card("Saved networks", w.saved.length ? h("table", {},
+      h("tr", {}, ["ID", "Name", "Security"].map((x) => h("th", {}, x))),
+      w.saved.map((n) => h("tr", {}, h("td", { class: "mono" }, n.id), h("td", {}, n.ssid, n.ssid === w.ssid ? h("span", { class: "ok" }, " · connected") : null), h("td", {}, n.security))))
+      : h("p", { class: "muted" }, "None saved.")));
 };
 
 // -------------------------------------------------------------- mmm settings

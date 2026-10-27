@@ -16,9 +16,13 @@ Like the rest of the client it has no dependencies, and it works on macOS and Li
 
 | Page | Get | Set |
 |---|---|---|
-| **Messages** | SMS threads, live as texts arrive | Send a text |
-| **Rules** | Rules and their recent runs | Edit rules, test one without replying |
+| **Messages** | SMS threads, live as texts arrive | Send a text, or a picture as MMS (shrunk in the browser to stay under carrier limits) |
+| **Rules** | Rules and their recent runs | Edit rules (for texts or other events), test one without replying |
 | **Phone** | Battery, signal, network, root, priv-app, MMM version | — |
+| **Calls** | Call log; contact search | — |
+| **Notifications** | Every app's live notifications (root) | Post one from MMM |
+| **Apps** | Every package: user, system, disabled (root) | Enable or disable (`pm disable-user`, reversible) |
+| **Network** | Wi-Fi state, signal, IP, saved networks (root); tailnet ping from this computer | — |
 | **MMM settings** | Every app setting | Every app setting (port and tailnet restart the listener) |
 | **Android settings** | `Settings.System`, `Secure` and `Global`, searchable | Any of them, given the permission |
 | **Console** | Any class, method or field | Any call; Java objects come back as clickable handles |
@@ -57,6 +61,23 @@ the Rules page; changes apply at once.
 | `reply` | `false` | Text the command's stdout back to the sender, cut to one SMS (160 characters, 70 with non-ASCII) |
 | `timeout` | `60` | Seconds before the command is killed |
 | `enabled` | `true` | Off keeps the rule without running it |
+| `event` | `sms` | What fires it: `sms`, `call`, `battery-low`, `battery-okay`, `power-connected`, `power-disconnected`, `wifi`, or any broadcast action |
+
+### Rules for other events
+
+A rule whose `event` is not `sms` runs when the phone sees that broadcast. Its
+trigger stays `*`, it cannot reply (there is no sender), and the command gets the
+intent as JSON on stdin with `MMM_EVENT` set to the event name. These
+subscriptions are not durable: an event that happens while the daemon is down is
+not replayed.
+
+```json
+{"trigger": "*", "event": "battery-low", "command": ["/usr/bin/say", "phone battery low"]}
+```
+
+The Apps, Network and Notifications pages read through `su` on the phone, so they
+need root. MMM and Tailscale cannot be disabled from the Apps page: the page
+reaches the phone through them.
 
 ### What the command receives
 
