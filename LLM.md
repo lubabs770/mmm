@@ -23,7 +23,8 @@ app/                                     Android app (Kotlin, Compose M3)
   src/test/   JVM unit tests (no Android types in what they touch)
 magisk/       module template, gen_privapp_xml.py, build.sh, its own tests
 client/mmm/   client.py (Android, JavaObject), transport.py, config.py,
-              cli.py, mcp.py
+              cli.py, mcp.py, rules.py (SMS rules), serve.py (daemon + HTTP API),
+              ui/ (the web UI: plain HTML/JS/CSS, packaged as data)
 client/tests/ tests against a fake NDJSON server (tests/fake_server.py)
 docs/         the docs site; gen_llms.py builds llms.txt
 ```

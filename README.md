@@ -32,6 +32,7 @@ mmm call android.os.Build getRadioVersion
 mmm watch android.provider.Telephony.SMS_RECEIVED --durable sms
 mmm repl
 mmm mcp        # an MCP server, so an AI assistant can use the phone
+mmm ui         # a web UI, plus rules: a text's first word runs a command here
 ```
 
 ## What is in here
@@ -64,7 +65,7 @@ mmm pair <token> --tailnet phone               # from a computer on your tailnet
 
 [Install guide](docs/install.md) · [Pairing](docs/pairing.md) ·
 [Python guide](docs/python.md) · [Protocol](docs/protocol.md) ·
-[Recipes](docs/recipes.md) · [MCP](docs/mcp.md) ·
+[Recipes](docs/recipes.md) · [MCP](docs/mcp.md) · [Web UI and rules](docs/ui.md) ·
 [Security model](docs/security.md) · [Design spec](docs/spec.md)
 
 ## How it works

@@ -30,5 +30,8 @@ Homepage = "https://github.com/lubabs770/mmm"
 [tool.setuptools]
 packages = ["mmm"]
 
+[tool.setuptools.package-data]
+mmm = ["ui/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
