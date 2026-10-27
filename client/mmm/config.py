@@ -15,7 +15,7 @@ from pathlib import Path
 DEFAULT_PORT = 7357
 LOOPBACK = "127.0.0.1"
 
-TRANSPORTS = ("local", "ssh", "adb")
+TRANSPORTS = ("local", "ssh", "adb", "tailnet")
 
 
 def config_path() -> Path:
@@ -55,7 +55,7 @@ class Profile:
     @property
     def connect_port(self) -> int:
         """The port the client actually opens a socket to."""
-        return self.port if self.transport == "local" else self.local_port
+        return self.port if self.transport in ("local", "tailnet") else self.local_port
 
     def to_toml(self) -> str:
         lines = [f"[profiles.{_quote_key(self.name)}]", f"transport = {_quote(self.transport)}"]
@@ -63,7 +63,7 @@ class Profile:
             lines.append(f"token = {_quote(self.token)}")
         lines.append(f"host = {_quote(self.host)}")
         lines.append(f"port = {self.port}")
-        if self.transport != "local":
+        if self.transport not in ("local", "tailnet"):
             lines.append(f"local_port = {self.local_port}")
         if self.ssh_host:
             lines.append(f"ssh_host = {_quote(self.ssh_host)}")

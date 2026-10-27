@@ -1,6 +1,6 @@
 """The ``mmm`` command.
 
-    mmm pair <token> [--ssh host | --adb]
+    mmm pair <token> [--ssh host | --adb | --tailnet host]
     mmm status
     mmm call android.os.Build MODEL
     mmm watch android.provider.Telephony.SMS_RECEIVED --durable sms
@@ -45,6 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
     pair.add_argument("token", help="token shown by the Clients screen in the app")
     pair.add_argument("--ssh", metavar="HOST", help="tunnel through ssh to HOST")
     pair.add_argument("--adb", action="store_true", help="tunnel through adb forward")
+    pair.add_argument("--tailnet", metavar="HOST",
+                      help="dial HOST directly over Tailscale (turn on tailnet in the app)")
     pair.add_argument("--name", help="profile name (default: local, ssh host, or adb)")
     pair.add_argument("--port", type=int, default=config_module.DEFAULT_PORT,
                       help="port MMM listens on, on the phone")
@@ -86,15 +88,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_pair(args: argparse.Namespace) -> int:
-    if args.ssh and args.adb:
-        print("mmm: pick either --ssh or --adb, not both", file=sys.stderr)
+    if sum(map(bool, (args.ssh, args.adb, args.tailnet))) > 1:
+        print("mmm: pick one of --ssh, --adb or --tailnet", file=sys.stderr)
         return 2
-    transport = "ssh" if args.ssh else "adb" if args.adb else "local"
-    name = args.name or (args.ssh if args.ssh else "adb" if args.adb else "local")
+    transport = "ssh" if args.ssh else "adb" if args.adb else "tailnet" if args.tailnet else "local"
+    name = args.name or args.ssh or args.tailnet or ("adb" if args.adb else "local")
     profile = Profile(
         name=name,
         token=args.token,
         transport=transport,
+        host=args.tailnet or config_module.LOOPBACK,
         port=args.port,
         local_port=args.local_port or args.port,
         ssh_host=args.ssh or "",
@@ -202,7 +205,8 @@ def describe(info: dict[str, Any]) -> str:
     model = info.get("model", "?")
     version = info.get("version", "?")
     port = info.get("port", "?")
-    return f"{model}, mmm {version} on 127.0.0.1:{port}"
+    tailnet = info.get("tailnet")
+    return f"{model}, mmm {version} on 127.0.0.1:{port}" + (f" and {tailnet}" if tailnet else "")
 
 
 def looks_like_method(name: str) -> bool:

@@ -41,11 +41,12 @@ class MmmService : Service() {
         AuditLog.get(this).log(AuditLog.Kind.SERVICE, "service started")
 
         val server = MmmRuntime.server(this)
-        combine(server.port, server.clients) { port, clients ->
+        combine(server.port, server.tailnet, server.clients) { port, tailnet, clients ->
+            val where = "${RpcServer.LOOPBACK}:$port" + (tailnet?.let { " + $it" } ?: "")
             when {
                 port == null -> "Not listening"
-                clients.isEmpty() -> "Listening on ${RpcServer.LOOPBACK}:$port"
-                else -> "Listening on ${RpcServer.LOOPBACK}:$port · ${clients.size} client" +
+                clients.isEmpty() -> "Listening on $where"
+                else -> "Listening on $where · ${clients.size} client" +
                     if (clients.size == 1) "" else "s"
             }
         }

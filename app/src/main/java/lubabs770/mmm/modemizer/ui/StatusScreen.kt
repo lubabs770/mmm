@@ -40,6 +40,8 @@ fun StatusScreen(primary: FocusRequester) {
 
     val port by server.port.collectAsStateWithLifecycle()
     val error by server.error.collectAsStateWithLifecycle()
+    val tailnet by server.tailnet.collectAsStateWithLifecycle()
+    val settings by remember { MmmRuntime.settings(context) }.state.collectAsStateWithLifecycle()
     val clients by server.clients.collectAsStateWithLifecycle()
     val eventsPerMinute by events.eventsPerMinute.collectAsStateWithLifecycle()
 
@@ -69,6 +71,9 @@ fun StatusScreen(primary: FocusRequester) {
                 )
             }
             InfoRow("Address", port?.let { "${RpcServer.LOOPBACK}:$it" } ?: "—")
+            if (settings.tailnet) {
+                InfoRow("Tailnet", tailnet ?: if (port != null) "waiting for Tailscale" else "—")
+            }
             InfoRow("Connected clients", clients.size.toString())
             InfoRow("Events per minute", eventsPerMinute.toString())
             error?.let { Hint(it) }

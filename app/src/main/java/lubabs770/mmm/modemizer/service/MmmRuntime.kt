@@ -54,7 +54,7 @@ object MmmRuntime {
     fun start(context: Context) {
         val p = parts(context)
         if (!_running.value) p.events.restore()
-        p.server.start(p.settings.current.port)
+        p.server.start(p.settings.current.port, p.settings.current.tailnet)
         _running.value = p.server.port.value != null
     }
 
@@ -79,12 +79,12 @@ object MmmRuntime {
         p.audit.log(AuditLog.Kind.REVOKE, "revoked $label", tokenId)
     }
 
-    /** Re-binds the listener, for when the port setting changes. */
+    /** Re-binds the listener, for when the port or tailnet setting changes. */
     fun restartListener(context: Context) {
         val p = parts(context)
         if (!_running.value) return
         p.server.stop()
-        p.server.start(p.settings.current.port)
+        p.server.start(p.settings.current.port, p.settings.current.tailnet)
         _running.value = p.server.port.value != null
     }
 }
