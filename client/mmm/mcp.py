@@ -19,7 +19,7 @@ import time
 from typing import Any, Callable
 
 from . import __version__
-from .client import Android, MmmError
+from .client import Android, MmmError, json_default
 
 PROTOCOL_VERSION = "2024-11-05"
 FACADE = "lubabs770.mmm.modemizer.rpc.Facade"
@@ -335,7 +335,7 @@ def handle(request: dict, bridge: Bridge, handlers: dict[str, Callable[[dict], A
         return ok(
             request_id,
             {
-                "content": [{"type": "text", "text": json.dumps(value, indent=2, default=repr)}],
+                "content": [{"type": "text", "text": json.dumps(value, indent=2, default=json_default)}],
                 "isError": False,
             },
         )
