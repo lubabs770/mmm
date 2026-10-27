@@ -52,7 +52,12 @@ SETTINGS_CLASSES = {
 LABEL = "lubabs770.mmm.serve"
 MANAGED_ENV = "MMM_SERVE_MANAGED"
 RUNS_KEPT = 1000
-STATIC = {"index.html": "text/html", "app.js": "text/javascript", "app.css": "text/css"}
+STATIC = {
+    "index.html": "text/html; charset=utf-8",
+    "app.js": "text/javascript; charset=utf-8",
+    "app.css": "text/css; charset=utf-8",
+    "favicon.png": "image/png",
+}
 
 log = logging.getLogger("mmm.serve")
 
@@ -734,13 +739,13 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _static(self, path: str) -> None:
-        name = "index.html" if path in ("/", "/index.html") else path.lstrip("/")
+        name = {"/": "index.html", "/favicon.ico": "favicon.png"}.get(path, path.lstrip("/"))
         if name not in STATIC:
             self._send_json(404, {"type": "not_found", "message": path})
             return
         body = resources.files("mmm").joinpath("ui", name).read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", f"{STATIC[name]}; charset=utf-8")
+        self.send_header("Content-Type", STATIC[name])
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Security-Policy",

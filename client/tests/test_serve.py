@@ -117,6 +117,14 @@ def test_the_page_itself_is_served_without_the_secret(setup):
         assert "script-src 'self'" in res.headers["Content-Security-Policy"]
 
 
+def test_the_favicon_is_served_as_a_png(setup):
+    _, daemon, _ = setup
+    for path in ("/favicon.png", "/favicon.ico"):
+        with urllib.request.urlopen(f"http://127.0.0.1:{daemon.port}{path}", timeout=5) as res:
+            assert res.headers["Content-Type"] == "image/png"
+            assert res.read().startswith(b"\x89PNG")
+
+
 def test_mmm_settings_round_trip(setup):
     server, daemon, _ = setup
     assert request(daemon, "GET", "/api/mmm-settings") == (200, {"port": 7357, "tailnet": True})
