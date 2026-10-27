@@ -96,6 +96,13 @@ def load_secret() -> str:
     return value
 
 
+def _tilde(path: Path) -> str:
+    """Home shown as ~, so the page (and screenshots of it) don't show a username."""
+    home = str(Path.home())
+    text = str(path)
+    return "~" + text[len(home):] if text == home or text.startswith(home + os.sep) else text
+
+
 def running() -> dict | None:
     """The live daemon's serve.json, or None when there is none (or it died)."""
     try:
@@ -814,7 +821,7 @@ class Handler(BaseHTTPRequestHandler):
                         raw["command"] = shlex.split(raw["command"])
                 d.save_rules(body)
             return {"rules": [dict(vars(r), command_line=shlex.join(r.command)) for r in d.rules],
-                    "path": str(d.rules_file)}
+                    "path": _tilde(d.rules_file)}
         if (method, path) == ("POST", "/api/rules/test"):
             body = self._body()
             return d.test_rule(str(body["trigger"]), str(body.get("text") or ""),
