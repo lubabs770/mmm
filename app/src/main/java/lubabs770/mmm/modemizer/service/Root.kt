@@ -68,9 +68,19 @@ object Root {
 /** Is MMM installed as a privileged system app? */
 object Privileged {
 
-    fun isPrivApp(context: Context): Boolean =
-        context.applicationInfo.sourceDir?.startsWith("/system/priv-app") == true ||
-            context.applicationInfo.sourceDir?.startsWith("/system_ext/priv-app") == true
+    /**
+     * The path alone is not enough: an update installed over the priv-app (say with
+     * `adb install -r -g`) lives under /data/app yet stays privileged. A system app
+     * holding MODIFY_PHONE_STATE, which only privileged apps are granted, is one.
+     */
+    fun isPrivApp(context: Context): Boolean {
+        val info = context.applicationInfo
+        val onPrivPath = info.sourceDir?.startsWith("/system/priv-app") == true ||
+            info.sourceDir?.startsWith("/system_ext/priv-app") == true
+        val updatedSystem = (info.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0 &&
+            holds(context, android.Manifest.permission.MODIFY_PHONE_STATE)
+        return onPrivPath || updatedSystem
+    }
 
     fun holds(context: Context, permission: String): Boolean =
         context.packageManager.checkPermission(permission, context.packageName) ==
