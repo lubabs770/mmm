@@ -103,7 +103,12 @@ private fun grantWithRoot(packageName: String, missing: List<String>): String {
     var granted = 0
     val failed = ArrayList<String>()
     missing.forEach { permission ->
-        val result = Root.run("pm grant $packageName $permission")
+        // WRITE_SETTINGS is an appop: pm grant always refuses it.
+        val result = if (permission == android.Manifest.permission.WRITE_SETTINGS) {
+            Root.run("appops set $packageName WRITE_SETTINGS allow")
+        } else {
+            Root.run("pm grant $packageName $permission")
+        }
         if (result.ok) granted++ else failed += permission.removePrefix("android.permission.")
     }
     return buildString {

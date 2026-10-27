@@ -32,12 +32,28 @@
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 
+    <!-- Common device control -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- An appop, not a privileged one: Permissions → Grant missing (root) allows it. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- Android 11 package visibility hides most apps (getLaunchIntentForPackage → null) without it. -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
     <!-- privileged: held only when installed as a priv-app with the generated allowlist -->
     <uses-permission
         android:name="android.permission.MODIFY_PHONE_STATE"
         tools:ignore="ProtectedPermissions" />
     <uses-permission
         android:name="android.permission.READ_PRIVILEGED_PHONE_STATE"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- Without it, startActivity from the service is aborted silently (Android 10+). -->
+    <uses-permission
+        android:name="android.permission.START_ACTIVITIES_FROM_BACKGROUND"
         tools:ignore="ProtectedPermissions" />
     <!-- /privileged -->
 

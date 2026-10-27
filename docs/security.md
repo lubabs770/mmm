@@ -65,8 +65,11 @@ release refuses to publish if the release key is missing.
 ## Privileged permissions
 
 The Magisk module installs MMM as a priv-app together with a generated allowlist
-(`privapp-permissions-mmm.xml`). This is the only way to hold `MODIFY_PHONE_STATE`
-and `READ_PRIVILEGED_PHONE_STATE`.
+(`privapp-permissions-mmm.xml`). This is the only way to hold `MODIFY_PHONE_STATE`,
+`READ_PRIVILEGED_PHONE_STATE`, `WRITE_SECURE_SETTINGS` and
+`START_ACTIVITIES_FROM_BACKGROUND`. As a priv-app, a full-scope token can therefore
+change secure settings (ADB, accessibility services, the default SMS app) and open
+any activity at any time.
 
 The allowlist is generated from the manifest at build time, because on Android 9 and
 later with `ro.control_privapp_permissions=enforce` a priv-app requesting a
