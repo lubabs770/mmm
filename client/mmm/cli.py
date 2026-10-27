@@ -16,7 +16,7 @@ import sys
 from typing import Any
 
 from . import __version__, config as config_module
-from .client import Android, JavaObject, MmmError
+from .client import Android, MmmError, json_default
 from .config import Profile
 
 
@@ -163,7 +163,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
                         "ts": event.ts,
                         "payload": event.payload,
                     },
-                    default=repr,
+                    default=json_default,
                 ),
                 flush=True,
             )
@@ -218,14 +218,7 @@ def parse_argument(raw: str) -> Any:
 
 
 def to_json(value: Any) -> str:
-    def fallback(item: Any) -> Any:
-        if isinstance(item, JavaObject):
-            return {"$h": item.handle, "cls": item.cls}
-        if isinstance(item, bytes):
-            return {"$bytes": len(item)}
-        return repr(item)
-
-    return json.dumps(value, indent=2, sort_keys=True, default=fallback)
+    return json.dumps(value, indent=2, sort_keys=True, default=json_default)
 
 
 if __name__ == "__main__":

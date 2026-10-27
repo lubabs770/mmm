@@ -759,3 +759,13 @@ class Member:
 
     def __hash__(self) -> int:
         return hash(self.value)
+
+
+def json_default(item: Any) -> Any:
+    """What ``json.dumps`` cannot write itself. Bytes go out as ``{"$b64": …}``, the
+    same shape the protocol uses, so nothing is lost and no consumer parses repr."""
+    if isinstance(item, JavaObject):
+        return {"$h": item.handle, "cls": item.cls}
+    if isinstance(item, (bytes, bytearray)):
+        return {"$b64": base64.b64encode(bytes(item)).decode("ascii")}
+    return repr(item)
