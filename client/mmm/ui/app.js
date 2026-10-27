@@ -258,7 +258,7 @@ views.phone = async () => {
     h("div", { class: "row spread" }, h("h1", {}, `${s.manufacturer || ""} ${s.model || i.model}`),
       h("button", { class: "btn", onclick: () => show("phone") }, "Refresh")),
     h("div", { class: "grid" },
-      card("Battery", h("div", { class: "big" }, s.batteryPercent == null ? "—" : `${s.batteryPercent}%`), h("div", { class: "muted" }, s.charging ? "charging" : "on battery")),
+      card("Battery", h("div", { class: "big" }, s.batteryPercent == null ? "—" : `${s.batteryPercent}%`), h("div", { class: "muted" }, s.charging ? `charging${s.plugged ? ` · ${s.plugged.toUpperCase()}` : ""}` : (s.plugged ? "plugged in, not charging" : "on battery"))),
       card("Signal", h("div", { class: "big mono" }, bars), h("div", { class: "muted" }, s.networkOperator || "no operator")),
       card("Network", kv([["Mobile data", s.dataEnabled == null ? "—" : (s.dataEnabled ? "on" : "off")], ["SIM state", s.simState], ["Phone permission", s.phoneStatePermission ? "granted" : "missing"]])),
       card("System", kv([["Android", `${s.androidRelease} (API ${s.sdkInt})`], ["Root", i.root ? "yes" : "no"], ["Priv-app", i.priv_app ? "yes" : "no"]])),

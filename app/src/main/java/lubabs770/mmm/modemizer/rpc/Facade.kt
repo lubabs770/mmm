@@ -6,7 +6,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.ContentResolver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.CallLog
@@ -133,14 +136,28 @@ object Facade {
             }
         }
 
-        val battery = context.getSystemService(Context.BATTERY_SERVICE) as? android.os.BatteryManager
+        val battery = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
         if (battery != null) {
             out["batteryPercent"] = runCatching {
-                battery.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
             }.getOrNull()
-            out["charging"] = runCatching {
-                if (Build.VERSION.SDK_INT >= 26) battery.isCharging else null
-            }.getOrNull()
+        }
+        // The sticky BATTERY_CHANGED intent, not BatteryManager.isCharging(): that one
+        // only says yes once the charger is "sufficient" by its own measure, so a slow
+        // USB port reads as not charging while the level climbs.
+        val sticky = runCatching {
+            context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        }.getOrNull()
+        if (sticky != null) {
+            val status = sticky.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+            out["charging"] = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == BatteryManager.BATTERY_STATUS_FULL
+            out["plugged"] = when (sticky.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)) {
+                BatteryManager.BATTERY_PLUGGED_AC -> "ac"
+                BatteryManager.BATTERY_PLUGGED_USB -> "usb"
+                BatteryManager.BATTERY_PLUGGED_WIRELESS -> "wireless"
+                else -> null
+            }
         }
         return out
     }
