@@ -35,6 +35,14 @@ mmm mcp        # an MCP server, so an AI assistant can use the phone
 mmm ui         # a web UI, plus rules: a text's first word runs a command here
 ```
 
+## Screenshots
+
+The app on a keypad flip phone (TCL Flip 2), mirrored with scrcpy:
+
+| Status | Clients | Settings |
+|---|---|---|
+| ![Status: the service, its address and tailnet listener, and the device's root and priv-app state](docs/images/app-status.png) | ![Clients: pair a new client, or revoke one](docs/images/app-clients.png) | ![Settings: port, listen on tailnet, start on boot, event backlog](docs/images/app-settings.png) |
+
 ## What is in here
 
 | | |
