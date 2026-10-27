@@ -19,10 +19,10 @@ import time
 from typing import Any, Callable
 
 from . import __version__
+from . import android as phone
 from .client import Android, MmmError, json_default
 
 PROTOCOL_VERSION = "2024-11-05"
-FACADE = "lubabs770.mmm.modemizer.rpc.Facade"
 
 #: How long a tool call waits for a dropped link to come back.
 RECONNECT_WAIT = 10.0
@@ -66,8 +66,7 @@ class Bridge:
             self._android.close()
 
     def facade(self, method: str, *args: Any) -> Any:
-        android = self.android
-        return android.call(android.cls(FACADE), method, android.context, *args)
+        return phone.facade(self.android, method, *args)
 
     def ensure_subscription(self, name: str, actions: list[str] | None) -> list[str]:
         android = self.android

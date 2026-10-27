@@ -12,7 +12,8 @@ import pytest
 from mmm import Android
 from mmm import rules as rules_module
 from mmm.config import Profile
-from mmm.serve import Daemon, parse_cursor_dump
+from mmm.android.settings import parse_cursor_dump
+from mmm.serve import Daemon
 
 from .fake_server import FakeServer, default_handler, result
 

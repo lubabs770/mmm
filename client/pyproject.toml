@@ -28,7 +28,7 @@ mmm = "mmm.cli:main"
 Homepage = "https://github.com/lubabs770/mmm"
 
 [tool.setuptools]
-packages = ["mmm"]
+packages = ["mmm", "mmm.android"]
 
 [tool.setuptools.package-data]
 mmm = ["ui/*"]
