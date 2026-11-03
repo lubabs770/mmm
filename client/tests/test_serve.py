@@ -333,3 +333,54 @@ def test_an_mms_runs_the_sms_rule_with_its_pictures(setup, monkeypatch):
     server.event("mmm-serve-mms", payload, event_id=11)  # a replay is not fetched again
     time.sleep(0.3)
     assert fetched == ["http://mmsc.example/abc"]
+
+
+def ws_upgrade(daemon, origin, secret=SECRET):
+    import socket as socket_module
+    sock = socket_module.create_connection(("127.0.0.1", daemon.port), timeout=5)
+    sock.sendall((f"GET /api/adb?s={secret} HTTP/1.1\r\nHost: 127.0.0.1:{daemon.port}\r\n"
+                  f"Origin: {origin}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                  "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+    return sock, sock.makefile("rb")
+
+
+def test_the_adb_bridge_wants_our_origin_and_the_secret(setup):
+    _, daemon, _ = setup
+    for origin, secret in (("http://evil.example", SECRET), (f"http://127.0.0.1:{daemon.port}", "wrong")):
+        sock, reply = ws_upgrade(daemon, origin, secret)
+        assert b" 403 " in reply.readline()
+        length = 0
+        while (line := reply.readline()) not in (b"\r\n", b""):
+            if line.lower().startswith(b"content-length:"):
+                length = int(line.split(b":")[1])
+        reply.read(length)
+        sock.close()
+
+
+def test_the_adb_bridge_pipes_to_the_adb_server(setup, monkeypatch):
+    import io
+    import socket as socket_module
+    import threading
+
+    from mmm import serve, wsbridge
+    from .test_wsbridge import masked
+
+    _, daemon, _ = setup
+    adb = socket_module.create_server(("127.0.0.1", 0))
+    monkeypatch.setattr(serve, "ADB_SERVER_PORT", adb.getsockname()[1])
+
+    def fake_adb():
+        adb.accept()[0].close()  # the reachability probe
+        conn, _ = adb.accept()
+        with conn:
+            assert conn.recv(100) == b"000chost:version"
+            conn.sendall(b"OKAY")
+
+    threading.Thread(target=fake_adb, daemon=True).start()
+    sock, reply = ws_upgrade(daemon, f"http://127.0.0.1:{daemon.port}")
+    assert b" 101 " in reply.readline()
+    while reply.readline() not in (b"\r\n", b""):
+        pass
+    sock.sendall(masked(2, b"000chost:version"))
+    assert wsbridge.read_message(reply, io.BytesIO()) == b"OKAY"
+    adb.close()

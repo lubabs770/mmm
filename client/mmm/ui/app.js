@@ -85,6 +85,7 @@ const main = document.getElementById("main");
 const views = {};
 let current = null;
 let refreshTimer = null;
+let screenSession = null; // the Screen tab's scrcpy session, stopped on any tab change
 
 function show(name) {
   current = name;
@@ -94,6 +95,7 @@ function show(name) {
     if (b.dataset.view === name) b.setAttribute("aria-current", "page");
   }
   clearInterval(refreshTimer);
+  if (screenSession) { screenSession.stop(); screenSession = null; }
   main.replaceChildren(h("p", { class: "muted" }, "Loading…"));
   views[name]();
 }
@@ -309,6 +311,48 @@ views.phone = async () => {
       card("System", kv([["Android", `${s.androidRelease} (API ${s.sdkInt})`], ["Root", i.root ? "yes" : "no"], ["Priv-app", i.priv_app ? "yes" : "no"]])),
       card("MMM", kv([["Version", i.version], ["Port", i.port], ["Tailnet", i.tailnet || "off"], ["Clients", i.clients]]))));
 };
+
+// ------------------------------------------------------------------- screen
+
+views.screen = async () => {
+  const info = await guard(() => api("GET", "/api/screen"));
+  if (!info || current !== "screen") return;
+  const canvas = h("canvas", { class: "screen", tabindex: "0", "aria-label": "Phone screen" });
+  const status = h("span", { class: "muted" }, "stopped");
+  const button = h("button", { class: "btn primary" }, "Start");
+  const setStatus = (text) => { status.textContent = text; };
+
+  async function startScreen() {
+    button.disabled = true;
+    try {
+      const { start } = await import("./screen.js");
+      const session = await start(canvas, { secret: SECRET, serial: info.serial, status: setStatus });
+      if (current !== "screen") { session.stop(); return; }
+      screenSession = session;
+      button.textContent = "Stop";
+      button.disabled = false;
+      canvas.focus();
+      session.done.catch((e) => toast("Screen", e.message, true)).finally(() => {
+        if (screenSession === session) screenSession = null;
+        setStatus("stopped");
+        button.textContent = "Start";
+      });
+    } catch (e) {
+      setStatus("stopped");
+      toast("Screen", e.message, true);
+      button.disabled = false;
+    }
+  }
+  button.addEventListener("click", () => (screenSession ? screenSession.stop() : startScreen()));
+
+  main.replaceChildren(
+    h("div", { class: "row spread" }, h("h1", {}, "Screen"), h("div", { class: "row" }, status, button)),
+    card(null,
+      h("p", { class: "muted" }, `scrcpy through the Mac's adb server${info.serial ? ` (${info.serial})` : ""}. Click the screen, then type: arrows = D-pad, Enter = OK, Esc = Back, F1/F2 = soft keys, F3/F4 = call/end.`),
+      canvas));
+};
+
+addEventListener("pagehide", () => { if (screenSession) screenSession.stop(); });
 
 // -------------------------------------------------------------------- calls
 

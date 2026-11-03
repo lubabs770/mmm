@@ -1,0 +1,19 @@
+{
+  "private": true,
+  "name": "mmm-screen",
+  "description": "Source of client/mmm/ui/screen.js, the Screen tab (Tango + scrcpy). Built output is committed.",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild screen.js --bundle --format=esm --target=es2022 --minify --legal-comments=eof --outfile=../mmm/ui/screen.js"
+  },
+  "dependencies": {
+    "@yume-chan/adb": "2.6.4",
+    "@yume-chan/adb-scrcpy": "2.3.2",
+    "@yume-chan/scrcpy": "2.3.0",
+    "@yume-chan/scrcpy-decoder-webcodecs": "2.5.3",
+    "@yume-chan/stream-extra": "2.6.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

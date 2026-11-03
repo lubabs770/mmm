@@ -20,6 +20,7 @@ Like the rest of the client it has no dependencies, and it works on macOS and Li
 | **Messages** | SMS threads, live as texts arrive | Send a text, or a picture as MMS (shrunk in the browser to stay under carrier limits) |
 | **Rules** | Rules and their recent runs | Edit rules (for texts or other events), test one without replying |
 | **Phone** | Battery, signal, network, root, priv-app, MMM version | — |
+| **Screen** | The phone's screen, live (scrcpy) | Keys and taps from this computer |
 | **Calls** | Call log; contact search | — |
 | **Notifications** | Every app's live notifications (root) | Post one from MMM |
 | **Apps** | Every package: user, system, disabled (root) | Enable or disable (`pm disable-user`, reversible) |
@@ -131,6 +132,25 @@ daemon over to the system; the page reconnects by itself.
 
 Commands in rules run with the `PATH` of the shell where you turned this on.
 
+## Screen
+
+The Screen page is scrcpy in the browser, built on
+[Tango](https://github.com/yume-chan/ya-webadb). The page speaks the adb server
+protocol over a WebSocket (`/api/adb`) that `mmm serve` pipes to the adb server
+on this computer (`127.0.0.1:5037`, or `$ANDROID_ADB_SERVER_PORT`). So it needs
+`adb` installed and already authorized on the phone; for a tailnet profile the
+page runs `adb connect <phone IP>:5555` itself if needed.
+
+Click the screen to focus it, then: arrows = D-pad, Enter = OK, Esc = Back,
+Backspace = delete, Home = home, F1/F2 = left/right soft keys, F3/F4 = call/end
+call, letters, digits, `*` and `#` as themselves. A mouse click is a tap. Video
+only, no audio. It needs WebCodecs H.264 (Chrome, Safari, Edge).
+
+It ships scrcpy server **3.3.3**, the newest Tango supports, whatever scrcpy
+version is installed on this computer. To rebuild the page's bundle:
+`cd client/web && npm ci && npm run build` (the output, `ui/screen.js`, is
+committed so installing never needs Node).
+
 ## Security
 
 The UI drives a token that can do anything on the phone, so:
@@ -142,6 +162,8 @@ The UI drives a token that can do anything on the phone, so:
   page keeps it for that tab only. Another website open in your browser cannot
   make calls without it.
 - The MMM token never reaches the browser.
+- `/api/adb` (the Screen page's adb pipe) also wants the secret, and refuses any
+  `Origin` other than this page's, so another site cannot open it.
 - The page is served with a strict Content Security Policy and builds every element
   from text, so a message cannot inject markup or script.
 - Rules run with **your** user's rights. Treat a rule like a command anyone who knows
