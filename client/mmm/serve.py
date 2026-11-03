@@ -39,6 +39,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import android as phone
 from . import rules as rules_module
+from . import wsbridge
 from .android import apps, calls, network, notifications, settings, sms
 from .client import Android, AndroidError, JavaClassRef, JavaObject, MmmError, json_default
 from .config import config_path
@@ -61,7 +62,11 @@ STATIC = {
     "app.js": "text/javascript; charset=utf-8",
     "app.css": "text/css; charset=utf-8",
     "favicon.png": "image/png",
+    "screen.js": "text/javascript; charset=utf-8",
+    "scrcpy-server": "application/octet-stream",
 }
+#: The adb server the Screen tab talks to, through /api/adb.
+ADB_SERVER_PORT = int(os.environ.get("ANDROID_ADB_SERVER_PORT") or 5037)
 
 log = logging.getLogger("mmm.serve")
 
@@ -755,6 +760,9 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/api/events" and method == "GET":
                 self._events()
                 return
+            if url.path == "/api/adb" and method == "GET":
+                self._adb()
+                return
             self._send_json(200, self._route(method, url.path, query))
         except HttpError as error:
             self._send_json(error.status, {"type": error.kind, "message": str(error)})
@@ -781,6 +789,32 @@ class Handler(BaseHTTPRequestHandler):
                          "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'")
         self.end_headers()
         self.wfile.write(body)
+
+    def _adb(self) -> None:
+        """Upgrade to a WebSocket and pipe it to the Mac's adb server (the Screen tab)."""
+        origin = self.headers.get("Origin") or ""
+        if origin not in (f"http://127.0.0.1:{self.d.port}", f"http://localhost:{self.d.port}"):
+            raise HttpError(403, "bad Origin", "forbidden")
+        key = self.headers.get("Sec-WebSocket-Key") or ""
+        if (self.headers.get("Upgrade") or "").lower() != "websocket" or not key:
+            raise HttpError(400, "expected a WebSocket upgrade")
+        address = ("127.0.0.1", ADB_SERVER_PORT)
+        try:
+            socket.create_connection(address, timeout=2).close()
+        except OSError as error:
+            raise HttpError(502, f"adb server isn't running on the Mac (adb start-server): {error}",
+                            "adb_unavailable") from error
+        self.send_response(101)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", wsbridge.accept_key(key))
+        self.end_headers()
+        self.wfile.flush()
+        self.close_connection = True
+        try:
+            wsbridge.pipe(self.rfile, self.wfile, address)
+        except OSError as error:
+            log.info("adb bridge ended: %s", error)
 
     def _events(self) -> None:
         listener = self.d.listen()
@@ -821,6 +855,15 @@ class Handler(BaseHTTPRequestHandler):
         if (method, path) == ("GET", "/api/phone"):
             info = d.android.ping()
             return {"info": info, "status": d.to_page(phone.facade(d.android, "deviceStatus"))}
+        if (method, path) == ("GET", "/api/screen"):
+            profile = d.android.profile
+            if profile.transport != "tailnet":
+                return {"serial": os.environ.get("ANDROID_SERIAL")}
+            try:  # adb lists tailnet devices by IP, not MagicDNS name
+                host = socket.gethostbyname(profile.host)
+            except OSError:
+                host = profile.host
+            return {"serial": f"{host}:5555"}
         if path == "/api/mmm-settings":
             if method == "GET":
                 return d.android.settings()
